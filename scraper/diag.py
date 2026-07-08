@@ -97,17 +97,21 @@ def main():
     nodes5, _ = dump("5_groupname", client.get(cat["href"]) if cat.get("href")
                      else client.fetch_children(cat["jsn"]))
 
-    # 6) drill each distinct child nodetype one more level to find LISTINGS.
-    seen_types = {}
-    for n in nodes5:
-        t = n.get("nodetype")
-        if t and t not in seen_types:
-            seen_types[t] = n
-    print(f"[5_groupname children nodetypes] {list(seen_types)}", flush=True)
-    for t, n in list(seen_types.items())[:4]:
+    # 6) drill the PARTTYPE leaves (the actual listing pages, URL-addressable).
+    ptypes = [n for n in nodes5 if n.get("nodetype") == "parttype"]
+    print(f"[5_groupname] parttypes found: {len(ptypes)}", flush=True)
+    for i, n in enumerate(ptypes[:3]):
         html6 = client.get(n["href"]) if n.get("href") else (
             client.fetch_children(n["jsn"]) if n.get("jsn") else "")
-        dump(f"6_child_{t}", html6)
+        nds, lst = dump(f"6_parttype_{i}", html6)
+        # If parse_listings found nothing, print raw markers so we can see the
+        # real listing structure and fix the parser.
+        if not lst:
+            import re as _re
+            prices = _re.findall(r"\$\d+\.\d{2}", html6 or "")[:8]
+            brands = _re.findall(r'listing-final-manufacturer[^>]*>([^<]+)', html6 or "")[:5]
+            pnums = _re.findall(r'listing-final-partnumber[^>]*>([^<]+)', html6 or "")[:5]
+            print(f"  [6_parttype_{i} raw] prices={prices} brands={brands} pnums={pnums}", flush=True)
     _finish()
 
 
