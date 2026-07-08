@@ -1,0 +1,32 @@
+name: RockAuto Diag Probe
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install deps
+        run: |
+          sudo apt-get update && sudo apt-get install -y tesseract-ocr
+          pip install -r requirements.txt
+      - name: Probe deep catalog structure
+        env:
+          SP_USE_PROXIES: "0"
+          SP_SOLVE_CAPTCHA: "1"
+          SP_MIN_DELAY: "2.0"
+          SP_MAX_DELAY: "4.0"
+        run: python scraper/diag.py
+      - name: Upload diag dump
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rockauto-diag
+          path: artifacts/diag/
+          if-no-files-found: warn
