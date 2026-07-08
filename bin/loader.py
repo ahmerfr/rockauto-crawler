@@ -296,13 +296,19 @@ class Loader:
         pid = self.part_id(brand_id, category_id, row)
 
         # 3. images (child, existence-guarded so we never dup or wipe seed rows)
-        for i, url in enumerate(_jload(row.get("image_urls"), [])):
-            if not url:
-                continue
-            path = _t(str(url), 255)
+        imgs = [str(u) for u in _jload(row.get("image_urls"), []) if u]
+        for i, url in enumerate(imgs):
+            path = _t(url, 255)
             self._insert_absent("part_images", {"part_id": pid, "path": path},
                                 {"part_id": pid, "path": path, "position": i,
                                  "alt": _t(row.get("name"), 255)})
+        # Set the storefront's main thumbnail from the first product photo — only
+        # when it isn't set yet, so we never clobber an existing/seed image.
+        if imgs:
+            self.cur.execute(
+                "UPDATE parts SET primary_image_path=%s "
+                "WHERE id=%s AND (primary_image_path IS NULL OR primary_image_path='')",
+                [_t(imgs[0], 255), pid])
 
         # 4. attributes
         for attr in _jload(row.get("attributes"), []):
