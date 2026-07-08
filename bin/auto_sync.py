@@ -179,14 +179,18 @@ def main() -> int:
         return 1
     try:
         runs = gh_json(["run", "list", "--repo", REPO, "--workflow", WORKFLOW,
-                        "--status", "success", "--limit", "40",
-                        "--json", "databaseId,createdAt"])
+                        "--limit", "40",
+                        "--json", "databaseId,status,conclusion,createdAt"])
     except Exception as exc:  # noqa: BLE001
         log(f"could not list runs: {exc}")
         return 1
 
     done = load_state()
-    new = [r for r in runs if str(r["databaseId"]) not in done]
+    # Load ANY finished run — not just conclusion=success. With 20 shards and
+    # fail-fast:false, one bad shard makes the whole run "failure", but the other
+    # shards' artifacts uploaded fine (if: always()) and hold real data.
+    new = [r for r in runs
+           if r.get("status") == "completed" and str(r["databaseId"]) not in done]
     new.sort(key=lambda r: r.get("createdAt", ""))
     if not new:
         log("no new completed runs — up to date.")
