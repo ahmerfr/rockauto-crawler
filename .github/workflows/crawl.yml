@@ -16,15 +16,16 @@ on:
   workflow_dispatch:
     inputs:
       budget:
-        description: "Requests per job (polite cap; keep each IP under RockAuto's threshold)"
-        default: "400"
+        description: "Requests per job (higher = more pages per IP per run)"
+        default: "2500"
       max_seconds:
-        description: "Max runtime per job in seconds (turn shards over faster on slow IPs)"
-        default: "7200"
-  # Auto-run every 6 hours: fresh IPs each cycle keep expanding catalog coverage
-  # (the loader dedupes on sku, so re-crawls just accumulate). Fully hands-off.
+        description: "Max runtime per job in seconds (< 21600 = GitHub's 6h ceiling)"
+        default: "19000"
+  # Every 2h: with runs taking ~1.5-2h, the 20 job slots stay near-continuously
+  # busy (a new run's shards queue behind the finishing ones), maxing the free
+  # 20-IP throughput. Loader dedupes, so overlap just accumulates coverage.
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "0 */2 * * *"
 
 env:
   SHARD_TOTAL: "20"
@@ -56,8 +57,8 @@ jobs:
         env:
           SP_USE_PROXIES: "0"        # each runner already has its own fresh IP
           SP_SOLVE_CAPTCHA: "1"      # OCR-solve securimage walls locally
-          SP_MIN_DELAY: "3.0"        # be polite — not a DoS
-          SP_MAX_DELAY: "6.0"
+          SP_MIN_DELAY: "1.2"        # tighter (fresh GitHub IPs tolerate it); abort logic covers blocks
+          SP_MAX_DELAY: "2.8"
         run: |
           python scraper/crawl_jsonl.py \
             --shard-index "${{ matrix.index }}" \
