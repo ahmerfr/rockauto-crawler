@@ -87,23 +87,27 @@ def main():
     else:
         cc_nodes_api = []
 
-    # 5) first category (from whichever gave categories)
-    cats = [n for n in (cc_nodes_api or cc_nodes_get)
-            if n.get("nodetype") in ("category", "group", "parttype")]
+    # 5) drill a groupname category (e.g. "Brake & Wheel Hub") via catalogapi.
+    cats = [n for n in (cc_nodes_get or cc_nodes_api)
+            if n.get("nodetype") == "groupname"]
     if not cats:
-        print("NO category/group nodes found at carcode level (via GET or API).")
-        _finish(); return
-    cat = cats[0]
-    nodes, _ = dump("5_category",
-                    client.get(cat["href"]) if cat.get("href")
-                    else client.fetch_children(cat["jsn"]))
+        print("NO groupname nodes at carcode level."); _finish(); return
+    # prefer Brake & Wheel Hub if present (known to have parts)
+    cat = next((c for c in cats if "brake" in str(c.get("jsn", {})).lower()), cats[0])
+    nodes5, _ = dump("5_groupname", client.get(cat["href"]) if cat.get("href")
+                     else client.fetch_children(cat["jsn"]))
 
-    # 6) drill one more level toward listings
-    grp = first(nodes, "group") or first(nodes, "parttype") or (nodes[0] if nodes else None)
-    if grp:
-        dump("6_group",
-             client.get(grp["href"]) if grp.get("href")
-             else client.fetch_children(grp["jsn"]))
+    # 6) drill each distinct child nodetype one more level to find LISTINGS.
+    seen_types = {}
+    for n in nodes5:
+        t = n.get("nodetype")
+        if t and t not in seen_types:
+            seen_types[t] = n
+    print(f"[5_groupname children nodetypes] {list(seen_types)}", flush=True)
+    for t, n in list(seen_types.items())[:4]:
+        html6 = client.get(n["href"]) if n.get("href") else (
+            client.fetch_children(n["jsn"]) if n.get("jsn") else "")
+        dump(f"6_child_{t}", html6)
     _finish()
 
 
