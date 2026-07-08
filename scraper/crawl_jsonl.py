@@ -115,13 +115,26 @@ def process(client, node: dict) -> tuple[list[dict], list[dict]]:
     return [], kids
 
 
+def _load_visited(path: str | None) -> set[str]:
+    """Prior runs' crawled node keys (from the shared Actions cache) so this run
+    SKIPS them and reaches new ground — the key to cumulative full-catalog coverage."""
+    if not path or not os.path.exists(path):
+        return set()
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return {ln.strip() for ln in fh if ln.strip()}
+    except OSError:
+        return set()
+
+
 def run(shard_index: int, shard_total: int, out_path: str,
         makes_override: list[str] | None = None,
-        budget: int = 400, max_seconds: int = 18000) -> dict:
+        budget: int = 400, max_seconds: int = 18000,
+        visited_file: str | None = None, visited_out: str | None = None) -> dict:
     """Crawl this shard, writing Listing rows as NDJSON to `out_path`."""
     started = time.monotonic()
     stats = {"nodes": 0, "listings": 0, "captchas": 0, "blocked": 0, "requests": 0,
-             "images": 0}
+             "images": 0, "skipped": 0}
     img_root = os.path.join(os.path.dirname(out_path) or ".", "images")
 
     proxies = ProxyManager()
@@ -142,7 +155,10 @@ def run(shard_index: int, shard_total: int, out_path: str,
         seeds = make_seed_nodes(mine)
 
     frontier: deque = deque(seeds)
-    visited: set[str] = set()
+    prior = _load_visited(visited_file)   # LEAF keys crawled in earlier runs (from cache)
+    seen_this_run: set[str] = set()       # in-run dedup (all node types)
+    new_keys: set[str] = set()            # leaf keys first crawled in THIS run (merged into cache)
+    print(f"[resume] loaded {len(prior)} previously-crawled leaves — will skip them", flush=True)
 
     out_dir = os.path.dirname(out_path)
     if out_dir:
@@ -170,9 +186,17 @@ def run(shard_index: int, shard_total: int, out_path: str,
             # make/year/model breadth first (which never reaches a leaf on a budget).
             node = frontier.pop()
             key = node.get("href") or json.dumps(node.get("payload", {}).get("jsn"), sort_keys=True)
-            if key in visited:
+            if key in seen_this_run:
                 continue
-            visited.add(key)
+            ntype = node.get("node_type")
+            is_leaf = ntype in C.LEAF_TYPES
+            # Cross-run skip: a LEAF already crawled in a prior run — skip it so we
+            # spend this run reaching NEW leaves. Branches are NEVER skipped (we must
+            # re-traverse them to descend to their still-uncrawled leaves).
+            if is_leaf and key in prior:
+                seen_this_run.add(key)
+                stats["skipped"] += 1
+                continue
 
             stats["requests"] += 1
             try:
@@ -180,12 +204,16 @@ def run(shard_index: int, shard_total: int, out_path: str,
             except Blocked:
                 stats["blocked"] += 1
                 stats["captchas"] += 1
-                frontier.append(node)  # re-queue; a later fresh IP may get it
+                frontier.appendleft(node)  # retry later (not marked seen, so it re-pops)
                 continue
             except Exception as exc:  # noqa: BLE001 - never die on one node
                 print(f"[warn] node error: {exc}", flush=True)
+                seen_this_run.add(key)
                 continue
 
+            seen_this_run.add(key)
+            if is_leaf:
+                new_keys.add(key)     # record this leaf as crawled (for the shared cache)
             stats["blocked"] = 0  # reset the consecutive-block counter on success
             stats["nodes"] += 1
             for lst in listings:
@@ -202,15 +230,25 @@ def run(shard_index: int, shard_total: int, out_path: str,
                 stats["listings"] += 1
             for kid in kids:
                 kkey = kid.get("href") or json.dumps(kid.get("payload", {}).get("jsn"), sort_keys=True)
-                if kkey not in visited:
+                if kkey not in seen_this_run:
                     frontier.append(kid)
 
             if stats["nodes"] % 20 == 0:
                 out.flush()
                 print(f"[progress] nodes={stats['nodes']} listings={stats['listings']} "
+                      f"new_leaves={len(new_keys)} skipped={stats['skipped']} "
                       f"frontier={len(frontier)} reqs={stats['requests']} "
                       f"captchas={stats['captchas']}", flush=True)
             time.sleep(_polite_delay())
+
+    # Persist the leaf keys crawled this run so the next run skips them (shared cache).
+    if visited_out:
+        try:
+            os.makedirs(os.path.dirname(visited_out) or ".", exist_ok=True)
+            with open(visited_out, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(sorted(new_keys)))
+        except OSError as exc:
+            print(f"[warn] could not write visited_out: {exc}", flush=True)
 
     print(f"[final] {stats}  out={out_path}", flush=True)
     return stats
@@ -231,6 +269,10 @@ def _parse_args(argv=None):
     p.add_argument("--makes", default=None, help="comma list to override auto make-discovery")
     p.add_argument("--budget", type=int, default=int(os.getenv("SP_JOB_BUDGET", "400")))
     p.add_argument("--max-seconds", type=int, default=int(os.getenv("SP_JOB_MAX_SECONDS", "18000")))
+    p.add_argument("--visited-file", default=os.getenv("VISITED_FILE"),
+                   help="path to prior-runs' crawled leaf keys (skip them)")
+    p.add_argument("--visited-out", default=os.getenv("VISITED_OUT"),
+                   help="write this run's newly-crawled leaf keys here (merged into cache)")
     p.add_argument("--selftest", action="store_true")
     return p.parse_args(argv)
 
@@ -262,7 +304,8 @@ def main(argv=None) -> int:
     if args.selftest:
         return 0 if _selftest() else 1
     makes = [m.strip().lower() for m in args.makes.split(",")] if args.makes else None
-    run(args.shard_index, args.shard_total, args.out, makes, args.budget, args.max_seconds)
+    run(args.shard_index, args.shard_total, args.out, makes, args.budget, args.max_seconds,
+        visited_file=args.visited_file, visited_out=args.visited_out)
     return 0
 
 
