@@ -313,6 +313,26 @@ _JUNK_IMG_RE = re.compile(
 )
 
 
+def _extract_product_images(soup, idx: str) -> list[str]:
+    """RockAuto puts each part's photo in a SEPARATE structure keyed by the part's
+    row index — `#inlineimg_container[N]` / `#listing_image_table[N]` — not inside
+    the part's text cell. Real photos are `/info/<n>/..._ra_m.jpg`. Pull those."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for cid in (f"inlineimg_container[{idx}]", f"listing_image_table[{idx}]"):
+        cont = soup.find(id=cid)
+        if not cont:
+            continue
+        for img in cont.find_all("img"):
+            for attr in ("data-src", "data-original", "data-lazy", "src"):
+                u = _absolutise(img.get(attr))
+                if u and "/info/" in u.lower() and u not in seen:
+                    seen.add(u)
+                    out.append(u)
+                    break
+    return out
+
+
 def _extract_images(cont) -> list[str]:
     """Product images in a container: data-src preferred over src, deduped.
     Filters out RockAuto UI chrome (flags, truck, Heart, help icons, spacers)."""
@@ -556,7 +576,20 @@ def parse_listings(html: str, ctx: dict) -> list[dict]:
                 name = part_number or brand_name or "Part"
 
             price, core_charge = _extract_price_and_core(cont)
-            image_urls = _extract_images(cont)
+            # Product photo lives in a sibling structure keyed by the part's row
+            # index (e.g. vew_partnumber[8] -> inlineimg_container[8]). Resolve the
+            # index, pull the /info/ photos; fall back to container-scoped images.
+            idx = None
+            m_idx = re.search(r"\[(\d+)\]", (pn_el.get("id") if pn_el else "") or "")
+            if not m_idx:
+                lc = anchor.find_parent(id=re.compile(r"listingcontainer\[\d+\]"))
+                if lc:
+                    m_idx = re.search(r"\[(\d+)\]", lc.get("id", "") or "")
+            if m_idx:
+                idx = m_idx.group(1)
+            image_urls = _extract_product_images(soup, idx) if idx else []
+            if not image_urls:
+                image_urls = _extract_images(cont)
             warranty = _extract_warranty(cont)
             interchange = _extract_interchange(cont)
             doc_urls = _extract_docs(cont)
