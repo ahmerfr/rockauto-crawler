@@ -1,0 +1,56 @@
+name: RockAuto Smoke Test
+
+# A tiny, fast first test: ONE runner crawls a sliver of Honda on a fresh GitHub
+# IP and prints + uploads what it got. Run this FIRST to confirm the fleet works
+# live (rows actually land) before scaling up with the full "RockAuto Crawl Fleet"
+# workflow. No dynamic matrix here — keep it simple.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install tesseract OCR + Python deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Smoke crawl (Honda only, tiny budget)
+        env:
+          SP_USE_PROXIES: "0"
+          SP_SOLVE_CAPTCHA: "1"
+          SP_MIN_DELAY: "2.0"
+          SP_MAX_DELAY: "4.0"
+        run: |
+          python scraper/crawl_jsonl.py \
+            --shard-index 0 --shard-total 1 \
+            --makes honda \
+            --out artifacts/smoke.ndjson \
+            --budget 40 --max-seconds 900
+
+      - name: Show what we got
+        if: always()
+        run: |
+          echo "=== line count ==="
+          wc -l artifacts/smoke.ndjson || echo "(no file)"
+          echo "=== first 3 listings ==="
+          head -3 artifacts/smoke.ndjson || echo "(empty)"
+
+      - name: Upload smoke artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rockauto-smoke
+          path: artifacts/smoke.ndjson
+          if-no-files-found: warn
