@@ -21,10 +21,10 @@ on:
       max_seconds:
         description: "Max runtime per job in seconds (< 21600 = GitHub's 6h ceiling)"
         default: "18000"
-  # Uncomment to keep pulling fresh IPs automatically every 6 hours until covered
-  # (re-runs re-crawl each shard; the loader dedupes on sku):
-  # schedule:
-  #   - cron: "0 */6 * * *"
+  # Auto-run every 6 hours: fresh IPs each cycle keep expanding catalog coverage
+  # (the loader dedupes on sku, so re-crawls just accumulate). Fully hands-off.
+  schedule:
+    - cron: "0 */6 * * *"
 
 env:
   SHARD_TOTAL: "20"
