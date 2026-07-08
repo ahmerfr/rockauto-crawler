@@ -19,8 +19,8 @@ on:
         description: "Requests per job (polite cap; keep each IP under RockAuto's threshold)"
         default: "400"
       max_seconds:
-        description: "Max runtime per job in seconds (< 21600 = GitHub's 6h ceiling)"
-        default: "18000"
+        description: "Max runtime per job in seconds (turn shards over faster on slow IPs)"
+        default: "7200"
   # Auto-run every 6 hours: fresh IPs each cycle keep expanding catalog coverage
   # (the loader dedupes on sku, so re-crawls just accumulate). Fully hands-off.
   schedule:

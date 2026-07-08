@@ -31,7 +31,7 @@ RATE = {
     "min_delay_s": float(os.getenv("SP_MIN_DELAY", "1.5")),   # per-IP base delay
     "max_delay_s": float(os.getenv("SP_MAX_DELAY", "4.0")),   # jittered upper bound
     "concurrency": int(os.getenv("SP_CONCURRENCY", "6")),     # parallel workers (each on its own proxy)
-    "request_timeout_s": 25,
+    "request_timeout_s": 15,    # fail a blocked/slow request fast so shards turn over
     "max_attempts": 4,          # per-node retry budget before marking 'failed'
     "captcha_backoff_s": 90,    # cool-down for an IP that hit a CAPTCHA
 }

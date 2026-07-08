@@ -159,6 +159,11 @@ def run(shard_index: int, shard_total: int, out_path: str,
             if stats["blocked"] >= 3:
                 print("[stop] IP appears burned (3 blocks) — abort for a fresh runner", flush=True)
                 break
+            # Consecutive-block resets on any success, so a merely RATE-LIMITED IP
+            # (intermittent timeouts) could grind for hours. Cap total blocks too.
+            if stats["captchas"] >= 12:
+                print(f"[stop] {stats['captchas']} total blocks — IP rate-limited, abort", flush=True)
+                break
 
             # DFS (pop from the right): drill straight down to part-listing leaves
             # so a job produces real listings early, instead of expanding the whole
