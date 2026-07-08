@@ -153,7 +153,10 @@ def run(shard_index: int, shard_total: int, out_path: str,
                 print("[stop] IP appears burned (3 blocks) — abort for a fresh runner", flush=True)
                 break
 
-            node = frontier.popleft()
+            # DFS (pop from the right): drill straight down to part-listing leaves
+            # so a job produces real listings early, instead of expanding the whole
+            # make/year/model breadth first (which never reaches a leaf on a budget).
+            node = frontier.pop()
             key = node.get("href") or json.dumps(node.get("payload", {}).get("jsn"), sort_keys=True)
             if key in visited:
                 continue
