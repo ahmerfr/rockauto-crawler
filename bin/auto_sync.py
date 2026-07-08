@@ -190,6 +190,7 @@ def main() -> int:
     new.sort(key=lambda r: r.get("createdAt", ""))
     if not new:
         log("no new completed runs — up to date.")
+        cleanup_staging()
         maybe_dispatch()
         log("=== auto_sync done ===")
         return 0
