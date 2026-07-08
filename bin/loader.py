@@ -305,9 +305,13 @@ class Loader:
         # Set the storefront's main thumbnail from the first product photo — only
         # when it isn't set yet, so we never clobber an existing/seed image.
         if imgs:
+            # Set the main thumbnail when it's unset, OR replace a broken remote
+            # rockauto.com URL with our self-hosted local path. Never clobber an
+            # existing local/seed image.
             self.cur.execute(
                 "UPDATE parts SET primary_image_path=%s "
-                "WHERE id=%s AND (primary_image_path IS NULL OR primary_image_path='')",
+                "WHERE id=%s AND (primary_image_path IS NULL OR primary_image_path='' "
+                "OR primary_image_path LIKE 'http%%rockauto%%')",
                 [_t(imgs[0], 255), pid])
 
         # 4. attributes
