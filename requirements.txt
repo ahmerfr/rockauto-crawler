@@ -1,0 +1,12 @@
+# RockAuto scraper pipeline — Python 3.13
+requests>=2.32
+lxml>=5.2
+beautifulsoup4>=4.12
+PyMySQL>=1.1
+# CAPTCHA solver (scraper/captcha_solver.py). Pillow does the image
+# preprocessing; pytesseract wraps the Tesseract OCR engine.
+# NOTE: pytesseract needs the native `tesseract` BINARY on PATH (Windows:
+# https://github.com/UB-Mannheim/tesseract/wiki — or set env TESSERACT_CMD to
+# its full path). The solver degrades gracefully (returns None) if it's absent.
+Pillow>=10.0
+pytesseract>=0.3.10

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PIES version="7.2">
+  <Items>
+    <Item>
+      <PartNumber>APX-1001</PartNumber>
+      <BrandLabel>Wagner</BrandLabel>
+      <PartTerminologyID>1684</PartTerminologyID>
+      <Descriptions>
+        <Description DescriptionCode="DES">Wagner ThermoQuiet Ceramic Disc Brake Pad Set</Description>
+        <Description DescriptionCode="EXT">Front axle, low-dust ceramic formulation with integral wear sensor.</Description>
+      </Descriptions>
+      <Prices>
+        <Price PriceType="LIST" UOM="EA" Currency="USD">45.99</Price>
+      </Prices>
+      <ProductAttributes>
+        <ProductAttribute AttributeID="Material">Ceramic</ProductAttribute>
+        <ProductAttribute AttributeID="Position">Front</ProductAttribute>
+      </ProductAttributes>
+      <DigitalAssets>
+        <DigitalFileInformation MaintenanceType="A">
+          <FileName>zd923.jpg</FileName>
+          <URI>https://img.example.com/parts/zd923.jpg</URI>
+        </DigitalFileInformation>
+      </DigitalAssets>
+      <PartInterchange>
+        <PartInterchangeInfo>
+          <BrandLabel>Bosch</BrandLabel>
+          <PartNumber>BC905</PartNumber>
+        </PartInterchangeInfo>
+      </PartInterchange>
+    </Item>
+    <Item>
+      <PartNumber>OF-2020</PartNumber>
+      <BrandLabel>Bosch</BrandLabel>
+      <PartTerminologyID>5340</PartTerminologyID>
+      <Descriptions>
+        <Description DescriptionCode="DES">Bosch Workshop Engine Oil Filter</Description>
+      </Descriptions>
+      <Prices>
+        <Price PriceType="LIST">8.49</Price>
+      </Prices>
+      <ProductAttributes>
+        <ProductAttribute AttributeID="Height">3.4 in</ProductAttribute>
+      </ProductAttributes>
+    </Item>
+  </Items>
+</PIES>

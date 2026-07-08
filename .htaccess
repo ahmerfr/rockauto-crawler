@@ -1,0 +1,9 @@
+RewriteEngine On
+RewriteBase /RockAuto/
+
+# Serve real files/dirs directly (css, js, images, uploads)
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+
+# Everything else → front controller
+RewriteRule ^ index.php [QSA,L]

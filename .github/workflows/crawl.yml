@@ -1,0 +1,84 @@
+name: RockAuto Crawl Fleet
+
+# Distributed RockAuto crawler. Each matrix job runs on a fresh GitHub-hosted
+# (Azure) runner = a fresh egress IP, and crawls a disjoint SHARD of makes. Since
+# RockAuto blocks by per-IP request VOLUME (not datacenter ASN), a fleet of fresh
+# IPs each doing a polite, bounded slice is the free way to cover the catalog.
+# Staged rows are uploaded as NDJSON artifacts; ingest them locally with
+# bin/ingest_artifacts.py then bin/loader.py. See docs/RUNBOOK_GHA.md.
+#
+# IMPORTANT: keep this a PUBLIC repo for unlimited free Actions minutes. Keep the
+# per-job budget polite — this is not a DoS.
+
+on:
+  workflow_dispatch:
+    inputs:
+      shards:
+        description: "Parallel shards (GitHub free tier allows ~20 concurrent jobs)"
+        default: "20"
+      budget:
+        description: "Requests per job (polite cap; keep each IP under RockAuto's threshold)"
+        default: "400"
+      max_seconds:
+        description: "Max runtime per job in seconds (< 21600 = GitHub's 6h ceiling)"
+        default: "18000"
+  # Uncomment to keep pulling fresh IPs automatically every 6 hours until the
+  # catalog is covered (re-runs re-crawl each shard; the loader dedupes on sku):
+  # schedule:
+  #   - cron: "0 */6 * * *"
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.gen.outputs.matrix }}
+    steps:
+      - id: gen
+        env:
+          N: ${{ github.event.inputs.shards || '20' }}
+        run: |
+          echo "matrix=$(python3 -c "import json,os;n=int(os.environ['N']);print(json.dumps({'index':list(range(n))}))")" >> "$GITHUB_OUTPUT"
+
+  crawl:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install tesseract OCR + Python deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Crawl shard ${{ matrix.index }}
+        env:
+          SP_USE_PROXIES: "0"        # each runner already has its own fresh IP
+          SP_SOLVE_CAPTCHA: "1"      # OCR-solve securimage walls locally
+          SP_MIN_DELAY: "3.0"        # be polite — not a DoS
+          SP_MAX_DELAY: "6.0"
+        run: |
+          python scraper/crawl_jsonl.py \
+            --shard-index "${{ matrix.index }}" \
+            --shard-total "${{ github.event.inputs.shards || '20' }}" \
+            --out "artifacts/shard-${{ matrix.index }}.ndjson" \
+            --budget "${{ github.event.inputs.budget || '400' }}" \
+            --max-seconds "${{ github.event.inputs.max_seconds || '18000' }}"
+
+      - name: Upload shard artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rockauto-shard-${{ matrix.index }}
+          path: artifacts/shard-${{ matrix.index }}.ndjson
+          if-no-files-found: warn

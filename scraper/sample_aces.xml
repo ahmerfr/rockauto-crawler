@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ACES version="4.2">
+  <App action="A" id="1">
+    <BaseVehicle id="18253"/>
+    <Qty>1</Qty>
+    <PartType id="1684"/>
+    <Position id="31">Front</Position>
+    <Note>Ceramic; with wear sensor</Note>
+    <Part>APX-1001</Part>
+    <MfrLabel>Wagner</MfrLabel>
+  </App>
+  <App action="A" id="2">
+    <Years from="2015" to="2016"/>
+    <Make id="474"/>
+    <Model id="2245"/>
+    <Qty>1</Qty>
+    <PartType id="5340"/>
+    <Part>OF-2020</Part>
+    <MfrLabel>Bosch</MfrLabel>
+  </App>
+</ACES>
