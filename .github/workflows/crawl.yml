@@ -66,10 +66,12 @@ jobs:
             --budget "${{ github.event.inputs.budget || '400' }}" \
             --max-seconds "${{ github.event.inputs.max_seconds || '18000' }}"
 
-      - name: Upload shard artifact
+      - name: Upload shard artifact (NDJSON + self-hosted thumbnails)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: rockauto-shard-${{ matrix.index }}
-          path: artifacts/shard-${{ matrix.index }}.ndjson
+          path: |
+            artifacts/shard-${{ matrix.index }}.ndjson
+            artifacts/images/
           if-no-files-found: warn

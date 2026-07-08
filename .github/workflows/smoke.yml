@@ -47,10 +47,12 @@ jobs:
           echo "=== first 3 listings ==="
           head -3 artifacts/smoke.ndjson || echo "(empty)"
 
-      - name: Upload smoke artifact
+      - name: Upload smoke artifact (NDJSON + self-hosted thumbnails)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: rockauto-smoke
-          path: artifacts/smoke.ndjson
+          path: |
+            artifacts/smoke.ndjson
+            artifacts/images/
           if-no-files-found: warn

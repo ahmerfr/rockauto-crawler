@@ -37,14 +37,19 @@ from datetime import datetime, timezone
 try:
     import config
     import crawl as C
+    import images
     import parsers
     from ra_client import RAClient, Blocked
     from proxy_manager import ProxyManager
 except ImportError:  # pragma: no cover - package layout
-    from scraper import config, parsers  # type: ignore
+    from scraper import config, images, parsers  # type: ignore
     from scraper import crawl as C  # type: ignore
     from scraper.ra_client import RAClient, Blocked  # type: ignore
     from scraper.proxy_manager import ProxyManager  # type: ignore
+
+# Self-host thumbnails: the GitHub runner (unblocked) downloads each part photo so
+# it lands on the user's own server (their IP is blocked from rockauto.com).
+DOWNLOAD_IMAGES = os.getenv("SP_DOWNLOAD_IMAGES", "1") == "1"
 
 
 def discover_makes(client) -> list[dict]:
@@ -115,7 +120,9 @@ def run(shard_index: int, shard_total: int, out_path: str,
         budget: int = 400, max_seconds: int = 18000) -> dict:
     """Crawl this shard, writing Listing rows as NDJSON to `out_path`."""
     started = time.monotonic()
-    stats = {"nodes": 0, "listings": 0, "captchas": 0, "blocked": 0, "requests": 0}
+    stats = {"nodes": 0, "listings": 0, "captchas": 0, "blocked": 0, "requests": 0,
+             "images": 0}
+    img_root = os.path.join(os.path.dirname(out_path) or ".", "images")
 
     proxies = ProxyManager()
     if config.PROXY.get("enabled", True):
@@ -177,6 +184,15 @@ def run(shard_index: int, shard_total: int, out_path: str,
             stats["blocked"] = 0  # reset the consecutive-block counter on success
             stats["nodes"] += 1
             for lst in listings:
+                # Self-host the thumbnail: download it (unblocked here) and rewrite
+                # the URL to the local storefront path so it loads on the user's box.
+                if DOWNLOAD_IMAGES and lst.get("image_urls"):
+                    local = images.download(client._session, lst["image_urls"][0], img_root)
+                    if local:
+                        lst["image_urls"] = [local]
+                        stats["images"] += 1
+                    else:
+                        lst["image_urls"] = []
                 out.write(json.dumps(lst, ensure_ascii=False) + "\n")
                 stats["listings"] += 1
             for kid in kids:

@@ -17,6 +17,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -120,6 +121,30 @@ def save_state(done: set[str]) -> None:
         json.dump({"processed": sorted(done)}, fh, indent=2)
 
 
+def copy_artifact_images(dest: str) -> int:
+    """Copy self-hosted thumbnails from a downloaded artifact tree into
+    assets/parts/ (served by Apache at /RockAuto/assets/parts/...). The path
+    after the '/images/' segment is the stable <n>/<basename> sub-path."""
+    assets = os.path.join(ROOT, "assets", "parts")
+    n = 0
+    for src in glob.glob(os.path.join(dest, "**", "images", "**", "*"), recursive=True):
+        if not os.path.isfile(src):
+            continue
+        after = src.replace("\\", "/").split("/images/", 1)
+        if len(after) != 2:
+            continue
+        target = os.path.join(assets, after[1].replace("/", os.sep))
+        if os.path.exists(target) and os.path.getsize(target) > 0:
+            continue
+        try:
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            shutil.copy2(src, target)
+            n += 1
+        except OSError:
+            pass
+    return n
+
+
 def process_run(run_id: str) -> bool:
     """Download + ingest + load one fleet run. True on success."""
     dest = os.path.join(DL_DIR, run_id)
@@ -133,6 +158,9 @@ def process_run(run_id: str) -> bool:
         return True
     total_lines = sum(sum(1 for _ in open(f, encoding="utf-8")) for f in files)
     log(f"run {run_id}: {len(files)} shard file(s), {total_lines} listing lines")
+    copied = copy_artifact_images(dest)
+    if copied:
+        log(f"  self-hosted {copied} thumbnail(s) -> assets/parts/")
     ing = subprocess.run([PY, os.path.join("bin", "ingest_artifacts.py"), *files],
                          capture_output=True, text=True, cwd=ROOT)
     log(f"  ingest: {(ing.stdout or ing.stderr).strip().splitlines()[-1] if (ing.stdout or ing.stderr).strip() else 'no output'}")
