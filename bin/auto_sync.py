@@ -146,6 +146,30 @@ def process_run(run_id: str) -> bool:
     return ld.returncode == 0
 
 
+STAGING_RETAIN_DAYS = 3
+
+
+def cleanup_staging() -> None:
+    """Trim the already-consumed staging buffer so it never grows unbounded over
+    months of crawling. Only touches processed stg_* rows — canonical parts/
+    vehicles/fitment are never affected."""
+    try:
+        conn = db.connect()
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM stg_listings WHERE processed=1 "
+                "AND scraped_at < (NOW() - INTERVAL %s DAY)", [STAGING_RETAIN_DAYS])
+            n1 = cur.rowcount
+            cur.execute("DELETE FROM stg_fitment WHERE processed=1")
+            n2 = cur.rowcount
+        conn.commit()
+        conn.close()
+        if n1 or n2:
+            log(f"staging cleanup: purged {n1} stg_listings + {n2} stg_fitment (already loaded)")
+    except Exception as exc:  # noqa: BLE001
+        log(f"staging cleanup skipped: {exc}")
+
+
 def main() -> int:
     log("=== auto_sync start ===")
     if not os.path.exists(GH):
@@ -182,6 +206,7 @@ def main() -> int:
                 log(f"run {rid}: load failed — will retry next cycle")
         except Exception as exc:  # noqa: BLE001
             log(f"run {rid}: error {exc} — will retry next cycle")
+    cleanup_staging()
     maybe_dispatch()
     log("=== auto_sync done ===")
     return 0
