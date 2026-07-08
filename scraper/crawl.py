@@ -187,13 +187,21 @@ def build_child_payload(child: dict, parent_payload: dict | None) -> dict:
         if v is not None and v != "":
             parent_ctx[f] = v
     ntype = child.get("nodetype")
-    # Build the category tree: groupname (e.g. 'Transmission-Automatic') then
-    # parttype (e.g. 'Filter') -> 'Transmission-Automatic>Filter'.
-    if ntype in ("category", "group", "groupname", "parttype"):
+    if ntype == "parttype":
+        # Deterministic: a parttype's jsn carries its exact parent groupname, and
+        # its nav label is the part-type name. Build the full path from the node
+        # ITSELF so it's identical no matter which route reached it (a parttype can
+        # be enqueued both from the carcode page and via groupname expansion).
+        grp = (child.get("jsn") or {}).get("groupname")
+        ptname = node_display_name(child)              # 'Filter', 'Brake Pad', ...
+        if grp and ptname and grp.strip().lower() != ptname.strip().lower():
+            parent_ctx["category_path"] = f"{str(grp).strip()}>{ptname}"
+        elif ptname:
+            parent_ctx["category_path"] = ptname
+    elif ntype in ("category", "group", "groupname"):
         name = node_display_name(child)
         if name:
             prev = parent_ctx.get("category_path")
-            # Don't repeat a level (e.g. if a parttype falls back to its groupname).
             if not prev:
                 parent_ctx["category_path"] = name
             elif prev.split(">")[-1].strip().lower() != name.strip().lower():
