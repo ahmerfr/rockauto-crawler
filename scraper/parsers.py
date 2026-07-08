@@ -303,8 +303,19 @@ def _listing_container(el):
     return el.parent or el
 
 
+# RockAuto UI chrome that shows up as <img> but is NOT a product photo:
+# market flags, the closeout truck, wishlist Heart, help icons, mobile chrome,
+# spacers. Real part thumbnails live under /info/ , /thumbs/ , or img.rockauto.com.
+_JUNK_IMG_RE = re.compile(
+    r"/catalog/images/|/images/mobile/|flag_|heart\.|truck\.|questionmark|"
+    r"1pxtransparent|spacer|blank|/icons?/|help",
+    re.IGNORECASE,
+)
+
+
 def _extract_images(cont) -> list[str]:
-    """All part images in a container: data-src preferred over src, deduped."""
+    """Product images in a container: data-src preferred over src, deduped.
+    Filters out RockAuto UI chrome (flags, truck, Heart, help icons, spacers)."""
     out: list[str] = []
     seen: set[str] = set()
     for img in cont.find_all("img"):
@@ -312,9 +323,8 @@ def _extract_images(cont) -> list[str]:
             v = img.get(attr)
             u = _absolutise(v)
             if u and u not in seen:
-                # Skip obvious 1x1 spacers / blanks.
                 low = u.lower()
-                if "spacer" in low or "blank" in low or low.endswith(".gif") and "icon" in low:
+                if low.endswith(".gif") or _JUNK_IMG_RE.search(low):
                     continue
                 seen.add(u)
                 out.append(u)
