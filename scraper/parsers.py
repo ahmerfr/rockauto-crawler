@@ -383,6 +383,20 @@ def _extract_price_and_core(cont) -> tuple[float | None, float | None]:
     return price, core
 
 
+def _extract_price_by_index(soup, idx: str) -> tuple[float | None, float | None]:
+    """RockAuto puts each part's price/core in cells keyed by the part row index,
+    OUTSIDE the part's text container: <span id="dprice[N][td]">$18.27</span> and
+    a core cell at listingtd[N][core]. Pull them by index."""
+    price = core = None
+    pe = soup.find(id=f"dprice[{idx}][td]") or soup.find(id=f"listingtd[{idx}][price]")
+    if pe is not None:
+        price = _money(pe.get_text(" ", strip=True))
+    ce = soup.find(id=f"dprice[{idx}][core]") or soup.find(id=f"listingtd[{idx}][core]")
+    if ce is not None:
+        core = _money(ce.get_text(" ", strip=True))
+    return price, core
+
+
 def _extract_attributes_and_desc(cont, name_el) -> tuple[list[dict], str | None]:
     """
     Walk .listing-text-row rows. Rows shaped 'Name: value' become attributes;
@@ -575,10 +589,10 @@ def parse_listings(html: str, ctx: dict) -> list[dict]:
                 # Fall back to part number for a human-facing name.
                 name = part_number or brand_name or "Part"
 
-            price, core_charge = _extract_price_and_core(cont)
-            # Product photo lives in a sibling structure keyed by the part's row
-            # index (e.g. vew_partnumber[8] -> inlineimg_container[8]). Resolve the
-            # index, pull the /info/ photos; fall back to container-scoped images.
+            # RockAuto lays out each part as a row keyed by an index (e.g.
+            # vew_partnumber[8]); its price, core charge and photo sit in SEPARATE
+            # cells under that same index, NOT inside the part's text container.
+            # Resolve the index once and pull those index-keyed fields.
             idx = None
             m_idx = re.search(r"\[(\d+)\]", (pn_el.get("id") if pn_el else "") or "")
             if not m_idx:
@@ -587,6 +601,18 @@ def parse_listings(html: str, ctx: dict) -> list[dict]:
                     m_idx = re.search(r"\[(\d+)\]", lc.get("id", "") or "")
             if m_idx:
                 idx = m_idx.group(1)
+
+            # Price + core: index-keyed cells first, container fallback second.
+            price = core_charge = None
+            if idx:
+                price, core_charge = _extract_price_by_index(soup, idx)
+            if price is None:
+                p2, c2 = _extract_price_and_core(cont)
+                price = p2
+                if core_charge is None:
+                    core_charge = c2
+
+            # Product photo (index-keyed structure), else container-scoped images.
             image_urls = _extract_product_images(soup, idx) if idx else []
             if not image_urls:
                 image_urls = _extract_images(cont)
