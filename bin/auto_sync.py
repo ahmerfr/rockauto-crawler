@@ -74,6 +74,39 @@ def gh_json(args: list[str]):
     return json.loads(out.stdout or "[]")
 
 
+# If the newest fleet run is older than this, the local task dispatches one
+# itself — so crawling continues even if GitHub's 6h cron gets disabled (GitHub
+# disables scheduled workflows after 60 days with no commits). 7h > the 6h cron,
+# so this only fires as a fallback when the cron didn't.
+DISPATCH_AFTER_HOURS = 7
+
+
+def maybe_dispatch() -> None:
+    """Keep the crawl alive: dispatch a fleet run if none is active/recent."""
+    try:
+        runs = gh_json(["run", "list", "--repo", REPO, "--workflow", WORKFLOW,
+                        "--limit", "1", "--json", "createdAt,status"])
+    except Exception as exc:  # noqa: BLE001
+        log(f"dispatch check skipped: {exc}")
+        return
+    if runs:
+        r = runs[0]
+        if r.get("status") in ("in_progress", "queued", "requested", "waiting", "pending"):
+            log("a fleet run is already active — not dispatching.")
+            return
+        try:
+            created = datetime.fromisoformat(r["createdAt"].replace("Z", "+00:00"))
+            age_h = (datetime.now(timezone.utc) - created).total_seconds() / 3600
+        except Exception:  # noqa: BLE001
+            age_h = 999.0
+        if age_h < DISPATCH_AFTER_HOURS:
+            log(f"last run {age_h:.1f}h ago (< {DISPATCH_AFTER_HOURS}h) — cron has it.")
+            return
+    log("no recent fleet run — dispatching one to keep coverage going.")
+    subprocess.run([GH, "workflow", "run", WORKFLOW, "--repo", REPO,
+                    "-f", "budget=400", "-f", "max_seconds=18000"], cwd=ROOT)
+
+
 def load_state() -> set[str]:
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as fh:
@@ -133,6 +166,7 @@ def main() -> int:
     new.sort(key=lambda r: r.get("createdAt", ""))
     if not new:
         log("no new completed runs — up to date.")
+        maybe_dispatch()
         log("=== auto_sync done ===")
         return 0
 
@@ -148,6 +182,7 @@ def main() -> int:
                 log(f"run {rid}: load failed — will retry next cycle")
         except Exception as exc:  # noqa: BLE001
             log(f"run {rid}: error {exc} — will retry next cycle")
+    maybe_dispatch()
     log("=== auto_sync done ===")
     return 0
 
