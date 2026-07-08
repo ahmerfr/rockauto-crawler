@@ -14,10 +14,19 @@ $pages = (int) ceil($total / max(1, $perPage));
 </form>
 
 <table class="adm-table">
-  <thead><tr><th>Part</th><th>Brand</th><th>Category</th><th class="right">Price</th><th>Fits</th><th>Status</th><th></th></tr></thead>
+  <thead><tr><th></th><th>Part</th><th>Brand</th><th>Category</th><th class="right">Price</th><th>Fits</th><th>Status</th><th></th></tr></thead>
   <tbody>
     <?php foreach ($parts as $p): ?>
       <tr>
+        <td class="adm-thumb-cell">
+          <?php if (!empty($p['primary_image_path'])): ?>
+            <img src="<?= e($p['primary_image_path']) ?>" alt="" loading="lazy"
+                 style="width:44px;height:44px;object-fit:contain;background:#fff;border:1px solid #e2e2e2;border-radius:4px;"
+                 onerror="this.style.visibility='hidden'">
+          <?php else: ?>
+            <span class="muted" style="display:inline-block;width:44px;text-align:center;">—</span>
+          <?php endif; ?>
+        </td>
         <td><a href="<?= e($_controller->url('/admin/parts/' . $p['id'] . '/edit')) ?>"><?= e($p['name']) ?></a>
             <span class="sub">#<?= e($p['part_number']) ?> · <?= e($p['sku']) ?></span></td>
         <td><?= e($p['brand'] ?? '—') ?></td>
@@ -35,7 +44,7 @@ $pages = (int) ceil($total / max(1, $perPage));
         </td>
       </tr>
     <?php endforeach; ?>
-    <?php if (!$parts): ?><tr><td colspan="7" class="muted">No parts found.</td></tr><?php endif; ?>
+    <?php if (!$parts): ?><tr><td colspan="8" class="muted">No parts found.</td></tr><?php endif; ?>
   </tbody>
 </table>
 

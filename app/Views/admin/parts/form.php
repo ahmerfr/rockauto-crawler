@@ -44,7 +44,22 @@ $val = fn(string $k, $d = '') => e((string) ($part[$k] ?? $d));
       </select>
     </label>
 
-    <label class="wide">Primary image URL<input type="text" name="primary_image_path" value="<?= $val('primary_image_path') ?>"></label>
+    <label class="wide">Primary image URL<input type="text" id="primary_image_path" name="primary_image_path" value="<?= $val('primary_image_path') ?>"></label>
+    <?php $imgval = $val('primary_image_path'); ?>
+    <div class="adm-img-preview" style="margin:-.25rem 0 .5rem;">
+      <img id="primary_image_preview" src="<?= $imgval ?>" alt="Part image preview"
+           style="max-width:180px;max-height:180px;object-fit:contain;background:#fff;border:1px solid #e2e2e2;border-radius:6px;padding:4px;<?= $imgval ? '' : 'display:none;' ?>"
+           onerror="this.style.display='none';">
+    </div>
+    <script>
+      (function () {
+        var inp = document.getElementById('primary_image_path');
+        var img = document.getElementById('primary_image_preview');
+        if (inp && img) inp.addEventListener('input', function () {
+          if (this.value) { img.src = this.value; img.style.display = ''; } else { img.style.display = 'none'; }
+        });
+      })();
+    </script>
     <label class="wide">Description<textarea name="description" rows="4"><?= $val('description') ?></textarea></label>
   </div>
   <div class="adm-form-actions">

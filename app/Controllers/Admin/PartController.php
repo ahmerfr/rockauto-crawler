@@ -25,6 +25,7 @@ class PartController extends AdminController
         $total = (int) $cntStmt->fetch()['n'];
 
         $sql = "SELECT p.id, p.sku, p.part_number, p.name, p.price, p.status,
+                       p.primary_image_path,
                        b.name AS brand, c.name AS category,
                        (SELECT COUNT(*) FROM part_fitment pf WHERE pf.part_id = p.id) AS fits
                   FROM parts p
