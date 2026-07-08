@@ -186,6 +186,22 @@ def _nav_href(inp, jsn: dict) -> str | None:
     return _htmllib.unescape(href) if href else None
 
 
+def _nav_label(inp) -> str | None:
+    """The node's human display name from its nav anchor text (e.g. 'Brake Pad',
+    'Filter', 'Transmission-Automatic'). This is the ONLY place the part-type name
+    lives — a parttype's jsn carries just the numeric id + parent groupname."""
+    cont = _nav_container(inp)
+    if cont is not None:
+        nh = (cont.find(id=re.compile(r"^navhref"))
+              or cont.find(class_=re.compile("navlabellink"))
+              or cont.find(class_=re.compile("navhref")))
+        if nh is not None:
+            txt = nh.get_text(" ", strip=True)
+            if txt:
+                return txt
+    return None
+
+
 def _markets(jsn: dict) -> list[str]:
     """Extract market country codes from jsn.jsdata.markets[].c (or .C)."""
     out: list[str] = []
@@ -256,6 +272,7 @@ def parse_nav(html: str) -> list[dict]:
                 "carcode": carcode,
                 "engine": jsn.get("engine") or None,
                 "href": _nav_href(inp, jsn),
+                "label": _nav_label(inp),
                 "jsn": jsn,
                 "markets": _markets(jsn),
             }
@@ -738,7 +755,7 @@ if __name__ == "__main__":
     # Verify the TreeNode has EXACTLY the contract keys.
     EXPECTED_NODE_KEYS = {
         "gip", "nodetype", "make", "year", "model", "carcode",
-        "engine", "href", "jsn", "markets",
+        "engine", "href", "label", "jsn", "markets",
     }
     if nodes:
         check(set(nodes[0].keys()) == EXPECTED_NODE_KEYS,

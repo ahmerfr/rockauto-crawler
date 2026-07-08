@@ -130,13 +130,18 @@ def in_scope_category(text: Any, scope=None) -> bool:
 
 
 def node_display_name(node: dict) -> str | None:
-    """Best-effort human name for a category/group node, pulled from its jsn.
-    Row classes/keys vary, so try a handful and fall back to None."""
+    """Human name for a category/parttype node. The nav-anchor label is the ONLY
+    source of a parttype's name (e.g. 'Filter', 'Brake Pad') — its jsn carries just
+    the numeric parttype id + the PARENT groupname. So prefer the label, then fall
+    back to jsn keys (skipping the numeric parttype id)."""
+    label = node.get("label")
+    if label:
+        return str(label).strip()
     jsn = node.get("jsn") or {}
     for key in ("desc", "description", "name", "title", "groupname",
                 "parttype", "label", "text"):
         val = jsn.get(key)
-        if val:
+        if val and not str(val).strip().isdigit():
             return str(val).strip()
     return None
 
@@ -182,11 +187,17 @@ def build_child_payload(child: dict, parent_payload: dict | None) -> dict:
         if v is not None and v != "":
             parent_ctx[f] = v
     ntype = child.get("nodetype")
-    if ntype in ("category", "group", "parttype"):
+    # Build the category tree: groupname (e.g. 'Transmission-Automatic') then
+    # parttype (e.g. 'Filter') -> 'Transmission-Automatic>Filter'.
+    if ntype in ("category", "group", "groupname", "parttype"):
         name = node_display_name(child)
         if name:
             prev = parent_ctx.get("category_path")
-            parent_ctx["category_path"] = f"{prev}>{name}" if prev else name
+            # Don't repeat a level (e.g. if a parttype falls back to its groupname).
+            if not prev:
+                parent_ctx["category_path"] = name
+            elif prev.split(">")[-1].strip().lower() != name.strip().lower():
+                parent_ctx["category_path"] = f"{prev}>{name}"
     return {
         "jsn": child.get("jsn"),
         "ctx": parent_ctx,
