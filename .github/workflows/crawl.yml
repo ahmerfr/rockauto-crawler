@@ -68,6 +68,8 @@ jobs:
           SP_SOLVE_CAPTCHA: "1"      # OCR-solve securimage walls locally
           SP_MIN_DELAY: "1.2"        # tighter (fresh GitHub IPs tolerate it); abort logic covers blocks
           SP_MAX_DELAY: "2.8"
+          SP_YEAR_MIN: "1900"        # widen from default 2010 -> ALL years RockAuto lists
+          SP_YEAR_MAX: "2026"
           VISITED_FILE: "coverage/visited.txt"
           VISITED_OUT: "artifacts/visited-${{ matrix.index }}.txt"
         run: |
