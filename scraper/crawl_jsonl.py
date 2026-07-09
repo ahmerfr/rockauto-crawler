@@ -74,6 +74,27 @@ def _make_cap(budget: int, n_makes: int) -> int:
     return max(50, budget // max(1, n_makes))
 
 
+def _seed_make_key(seed: dict) -> str:
+    """The make slug of a seed node (matches --priority-makes entries)."""
+    slug = (seed.get("href") or "").rstrip("/").split("/")[-1]
+    if slug:
+        return slug.lower()
+    return str(((seed.get("payload") or {}).get("ctx") or {}).get("make") or "").lower()
+
+
+def order_seeds(seeds: list[dict], priority: list[str] | None) -> list[dict]:
+    """Reorder so priority makes drain FIRST. The frontier is a DFS stack popped
+    from the right, so priority seeds go at the TAIL (reversed) to pop first, in
+    the given order; non-priority makes stay at the head (the alpha tail)."""
+    if not priority:
+        return seeds
+    rank = {m.strip().lower(): i for i, m in enumerate(priority) if m.strip()}
+    pri = [s for s in seeds if _seed_make_key(s) in rank]
+    rest = [s for s in seeds if _seed_make_key(s) not in rank]
+    pri.sort(key=lambda s: rank[_seed_make_key(s)], reverse=True)  # rank 0 popped first
+    return rest + pri
+
+
 def make_seed_nodes(makes: list[dict]) -> list[dict]:
     """Turn make TreeNodes into BFS frontier nodes."""
     seeds = []
@@ -89,10 +110,29 @@ def make_seed_nodes(makes: list[dict]) -> list[dict]:
     return seeds
 
 
-def process(client, node: dict) -> tuple[list[dict], list[dict]]:
-    """Fetch + expand one node. Returns (listings, child_nodes).
+def _vehicle_record(child: dict) -> dict:
+    """A carcode nav node -> one vehicle NDJSON row (no part fields). The model
+    page's carcode jsn already carries make/model/year/engine/carcode/markets, so
+    no further fetch is needed to know the vehicle (tree-only mode)."""
+    mkts = child.get("markets")
+    return {
+        "source": "rockauto",
+        "make_name": child.get("make"),
+        "model_name": child.get("model"),
+        "year": child.get("year"),          # parse_nav already coerced to int
+        "engine_name": child.get("engine"),
+        "carcode": child.get("carcode"),
+        "market": (",".join(mkts) if mkts else None),
+    }
 
-    Mirrors crawl._process_node but returns data instead of touching a DB.
+
+def process(client, node: dict, tree_only: bool = False) -> tuple[list[dict], list[dict]]:
+    """Fetch + expand one node. Returns (rows, child_nodes).
+
+    Mirrors crawl._process_node but returns data instead of touching a DB. In
+    tree_only mode a carcode child is NOT enqueued (no groupname/parttype/leaf
+    fetch); instead one vehicle row is emitted for it — enumerating every vehicle
+    by fetching only make+year+model pages.
     """
     payload = node.get("payload") or {}
     href = node.get("href")
@@ -111,16 +151,19 @@ def process(client, node: dict) -> tuple[list[dict], list[dict]]:
         return listings, []
 
     children = parsers.parse_nav(html)
-    kids = []
+    rows, kids = [], []
     for child in children:
         if not C.should_enqueue(child):
+            continue
+        if tree_only and child.get("nodetype") == "carcode":
+            rows.append(_vehicle_record(child))   # emit vehicle, don't descend
             continue
         kids.append({
             "node_type": child.get("nodetype", "node"),
             "href": child.get("href"),
             "payload": C.build_child_payload(child, payload),
         })
-    return [], kids
+    return rows, kids
 
 
 def _load_visited(path: str | None) -> set[str]:
@@ -138,8 +181,10 @@ def _load_visited(path: str | None) -> set[str]:
 def run(shard_index: int, shard_total: int, out_path: str,
         makes_override: list[str] | None = None,
         budget: int = 400, max_seconds: int = 18000,
-        visited_file: str | None = None, visited_out: str | None = None) -> dict:
-    """Crawl this shard, writing Listing rows as NDJSON to `out_path`."""
+        visited_file: str | None = None, visited_out: str | None = None,
+        tree_only: bool = False, priority: list[str] | None = None) -> dict:
+    """Crawl this shard, writing Listing rows (or vehicle rows in tree_only) as
+    NDJSON to `out_path`."""
     started = time.monotonic()
     stats = {"nodes": 0, "listings": 0, "captchas": 0, "blocked": 0, "requests": 0,
              "images": 0, "skipped": 0, "capped": 0}
@@ -161,6 +206,12 @@ def run(shard_index: int, shard_total: int, out_path: str,
         mine = shard(all_makes, shard_index, shard_total)
         print(f"[shard] {shard_index}/{shard_total}: {len(mine)}/{len(all_makes)} makes", flush=True)
         seeds = make_seed_nodes(mine)
+
+    seeds = order_seeds(seeds, priority)
+    if priority:
+        print(f"[priority] draining first: {','.join(priority)}", flush=True)
+    if tree_only:
+        print("[tree-only] emitting a vehicle row per carcode; not crawling leaves", flush=True)
 
     make_cap = _make_cap(budget, len(seeds))
     per_make: dict[str, int] = {}         # requests spent per make this run
@@ -223,7 +274,7 @@ def run(shard_index: int, shard_total: int, out_path: str,
             stats["requests"] += 1
             per_make[mk] = per_make.get(mk, 0) + 1
             try:
-                listings, kids = process(client, node)
+                listings, kids = process(client, node, tree_only)
             except Blocked:
                 stats["blocked"] += 1
                 stats["captchas"] += 1
@@ -296,6 +347,10 @@ def _parse_args(argv=None):
                    help="path to prior-runs' crawled leaf keys (skip them)")
     p.add_argument("--visited-out", default=os.getenv("VISITED_OUT"),
                    help="write this run's newly-crawled leaf keys here (merged into cache)")
+    p.add_argument("--tree-only", action="store_true", default=os.getenv("TREE_ONLY") == "1",
+                   help="enumerate every vehicle (one row per carcode) WITHOUT crawling leaf listings")
+    p.add_argument("--priority-makes", default=os.getenv("PRIORITY_MAKES"),
+                   help="comma list of makes to crawl FIRST (before the alpha tail)")
     p.add_argument("--selftest", action="store_true")
     return p.parse_args(argv)
 
@@ -321,6 +376,51 @@ def _selftest() -> bool:
     # cap splits budget across makes; floor keeps a make reachable on tiny budgets
     check("make cap splits budget", _make_cap(2500, 12) == 208)
     check("make cap floor", _make_cap(100, 50) == 50)
+
+    # tree-only: a model page with 2 carcode nodes -> 2 vehicle rows, 0 children.
+    MODEL_HTML = """
+    <html><body>
+      <input id="jsn[3309958]" value='{"nodetype":"carcode","make":"Honda",
+        "year":"2015","model":"Accord","carcode":3309958,"engine":"2.4L L4",
+        "jsdata":{"markets":[{"c":"US"}]},"href":"/en/catalog/honda,2015,accord,2.4l,3309958"}'>
+      <input id="jsn[3309959]" value='{"nodetype":"carcode","make":"Honda",
+        "year":"2015","model":"Accord","carcode":3309959,"engine":"3.5L V6",
+        "jsdata":{"markets":[{"c":"US"},{"c":"CA"}]},"href":"/en/catalog/honda,2015,accord,3.5l,3309959"}'>
+    </body></html>
+    """
+
+    class _FakeClient:
+        def get(self, href): return MODEL_HTML
+        def fetch_children(self, jsn): return MODEL_HTML
+
+    model_node = {"node_type": "model", "href": "/en/catalog/honda,2015,accord",
+                  "payload": {"ctx": {"make": "Honda"}}}
+    rows, kids = process(_FakeClient(), model_node, tree_only=True)
+    check("tree-only emits 2 vehicle rows", len(rows) == 2)
+    check("tree-only enqueues NO children", kids == [])
+    check("vehicle row shape", rows and rows[0]["source"] == "rockauto"
+          and rows[0]["make_name"] == "Honda" and rows[0]["model_name"] == "Accord"
+          and rows[0]["year"] == 2015 and rows[0]["carcode"] == "3309958"
+          and rows[0]["engine_name"] == "2.4L L4" and rows[0]["market"] == "US"
+          and "part_number" not in rows[0])
+    check("vehicle row multi-market CSV", rows and rows[1]["market"] == "US,CA")
+    # normal mode: the SAME page enqueues the carcodes as children, emits nothing.
+    n_rows, n_kids = process(_FakeClient(), model_node, tree_only=False)
+    check("full mode emits no vehicle rows", n_rows == [])
+    check("full mode enqueues carcode children", len(n_kids) == 2
+          and all(k["node_type"] == "carcode" for k in n_kids))
+
+    # priority-makes: honda drains before the alpha tail -> honda seed at the TAIL
+    # (DFS pops from the right), toyota just before it.
+    pseeds = make_seed_nodes([{"make": "ACURA", "href": "/en/catalog/acura"},
+                              {"make": "TOYOTA", "href": "/en/catalog/toyota"},
+                              {"make": "HONDA", "href": "/en/catalog/honda"}])
+    ordered = order_seeds(pseeds, ["honda", "toyota"])
+    check("priority makes moved to tail", _seed_make_key(ordered[-1]) == "honda"
+          and _seed_make_key(ordered[-2]) == "toyota"
+          and _seed_make_key(ordered[0]) == "acura")
+    check("order_seeds no-op without priority", order_seeds(pseeds, None) is pseeds)
+
     print("PASS" if ok else "FAIL")
     return ok
 
@@ -330,8 +430,11 @@ def main(argv=None) -> int:
     if args.selftest:
         return 0 if _selftest() else 1
     makes = [m.strip().lower() for m in args.makes.split(",")] if args.makes else None
+    priority = ([m.strip().lower() for m in args.priority_makes.split(",") if m.strip()]
+                if args.priority_makes else None)
     run(args.shard_index, args.shard_total, args.out, makes, args.budget, args.max_seconds,
-        visited_file=args.visited_file, visited_out=args.visited_out)
+        visited_file=args.visited_file, visited_out=args.visited_out,
+        tree_only=args.tree_only, priority=priority)
     return 0
 
 

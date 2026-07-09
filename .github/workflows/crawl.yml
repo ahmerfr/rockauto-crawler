@@ -15,12 +15,20 @@ name: RockAuto Crawl Fleet
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: "full = crawl to part leaves (+images); tree = enumerate every vehicle only (make+year+model pages, no leaves/images)"
+        default: "full"
+        type: choice
+        options: ["full", "tree"]
       budget:
         description: "Requests per job (higher = more pages per IP per run)"
         default: "2500"
       max_seconds:
-        description: "Max runtime per job in seconds (< 21600 = GitHub's 6h ceiling)"
-        default: "19000"
+        description: "Max runtime per job in seconds. Blank = 19000 (full) / 10800 (tree)."
+        default: ""
+      priority_makes:
+        description: "Optional comma-separated makes to crawl first (passed as PRIORITY_MAKES)"
+        default: ""
   # Every 2h: with runs taking ~1.5-2h, the 20 job slots stay near-continuously
   # busy (a new run's shards queue behind the finishing ones), maxing the free
   # 20-IP throughput. Loader dedupes, so overlap just accumulates coverage.
@@ -55,7 +63,9 @@ jobs:
 
       # Shared cross-run memory of which LEAF pages are already crawled, so this
       # run skips them and reaches NEW ground (cumulative full-catalog coverage).
+      # tree mode fetches make/year/model pages (not leaves) -> no visited cache.
       - name: Restore crawled-leaves cache
+        if: ${{ (github.event.inputs.mode || 'full') != 'tree' }}
         uses: actions/cache/restore@v4
         with:
           path: coverage/visited.txt
@@ -71,15 +81,22 @@ jobs:
           SP_YEAR_MIN: "1900"        # widen from default 2010 -> ALL years RockAuto lists
           SP_YEAR_MAX: "2026"
           SP_MARKETS: ""             # empty = worldwide (all markets); market saved to vehicles.market
-          VISITED_FILE: "coverage/visited.txt"
-          VISITED_OUT: "artifacts/visited-${{ matrix.index }}.txt"
+          # tree mode = vehicle enumeration only: no leaf images, no visited cache.
+          SP_DOWNLOAD_IMAGES: ${{ (github.event.inputs.mode || 'full') == 'tree' && '0' || '1' }}
+          PRIORITY_MAKES: ${{ github.event.inputs.priority_makes || '' }}
+          VISITED_FILE: ${{ (github.event.inputs.mode || 'full') == 'tree' && '' || 'coverage/visited.txt' }}
+          VISITED_OUT: ${{ (github.event.inputs.mode || 'full') == 'tree' && '' || format('artifacts/visited-{0}.txt', matrix.index) }}
         run: |
+          MODE="${{ github.event.inputs.mode || 'full' }}"
+          EXTRA=""
+          if [ "$MODE" = "tree" ]; then EXTRA="--tree-only"; fi
           python scraper/crawl_jsonl.py \
             --shard-index "${{ matrix.index }}" \
             --shard-total "${{ env.SHARD_TOTAL }}" \
             --out "artifacts/shard-${{ matrix.index }}.ndjson" \
             --budget "${{ github.event.inputs.budget || '2500' }}" \
-            --max-seconds "${{ github.event.inputs.max_seconds || '19000' }}"
+            --max-seconds "${{ github.event.inputs.max_seconds || (( github.event.inputs.mode || 'full') == 'tree' && '10800' || '19000') }}" \
+            $EXTRA
 
       - name: Upload shard artifact (NDJSON + thumbnails + new-leaves list)
         if: always()

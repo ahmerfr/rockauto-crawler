@@ -300,6 +300,12 @@ class Loader:
             vehicle_id = self.vehicle_id(mk, mo, year, eng, row.get("trim"), vslug,
                                          row.get("market"))
 
+        # Vehicle-only dimension row (from the --tree-only crawl): the make/model/
+        # engine/vehicle upsert above IS the whole payload — there is no part. Stop
+        # before part_id, which would otherwise mint a junk "brand-part" sku.
+        if not row.get("brand_name") and not row.get("part_number"):
+            return
+
         # 2. brand + category + part
         brand_id = self.brand_id(row.get("brand_name"))
         category_id = self.category_leaf_id(row.get("category_path"))

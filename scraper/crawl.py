@@ -291,9 +291,12 @@ def stage_listings(conn, listings: list[dict], batch_id: str) -> int:
                         batch_id,
                     ),
                 )
-                # Companion fitment row (needs a fully-known vehicle).
+                # Companion fitment row (needs a fully-known vehicle AND a part to
+                # attach to — vehicle-only tree rows have no sku, so skip them or the
+                # loader would chase a junk "brand-part" sku on every run).
                 yr = _as_int(lst.get("year"))
-                if lst.get("make_name") and lst.get("model_name") and yr:
+                if (lst.get("make_name") and lst.get("model_name") and yr
+                        and (lst.get("brand_name") or lst.get("part_number"))):
                     cur.execute(
                         "INSERT INTO stg_fitment "
                         "(sku, make_name, model_name, `year`, engine_name, "

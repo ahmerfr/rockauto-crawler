@@ -84,11 +84,52 @@ def _cleanup_selftest_rows() -> None:
         conn.close()
 
 
+def _selftest_vehicles() -> bool:
+    """Vehicle-only (dimension) rows — the --tree-only crawl shape: make/model/year/
+    engine but NO part_number/brand_name. Stage 2 distinct vehicles, run the loader,
+    assert 2 vehicles materialize (and no junk part), then ROLL BACK so nothing
+    persists. Mirrors loader.selftest's transaction-and-rollback pattern."""
+    import loader  # local import: reuse Loader + vehicle_slug without a load-time dep
+    conn = db.connect()
+    batch = "selftest_veh_batch"
+    rows = [
+        {"make_name": "SELFTESTVEH Make", "model_name": "SELFTESTVEH Model",
+         "year": 2019, "engine_name": "1.5L L4 Turbo"},
+        {"make_name": "SELFTESTVEH Make", "model_name": "SELFTESTVEH Model",
+         "year": 2020, "engine_name": "2.0L L4"},
+    ]
+    try:
+        conn.begin()
+        cur = conn.cursor()
+        for r in rows:
+            cur.execute(
+                "INSERT INTO stg_listings (source, make_name, model_name, `year`, "
+                "engine_name, batch_id, processed) VALUES (%s,%s,%s,%s,%s,%s,0)",
+                ("rockauto", r["make_name"], r["model_name"], r["year"],
+                 r["engine_name"], batch))
+        counts = loader.Loader(conn).process_batch(batch)
+        slugs = [loader.vehicle_slug(r["make_name"], r["model_name"], r["year"],
+                                     r["engine_name"], None) for r in rows]
+        cur.execute(
+            "SELECT COUNT(*) n FROM vehicles WHERE slug IN (%s,%s)", slugs)
+        n_veh = cur.fetchone()["n"]
+        ok = (counts["listings_ok"] == 2 and n_veh == 2)
+        print(f"  [{'PASS' if ok else 'FAIL'}] 2 vehicle-only rows -> "
+              f"{n_veh} vehicles, listings_ok={counts['listings_ok']}")
+        return ok
+    finally:
+        try:
+            conn.rollback()   # never persist selftest dimensions
+        except Exception:     # noqa: BLE001
+            pass
+        conn.close()
+
+
 def _selftest() -> bool:
     if not db.ping():
         print("SKIP (DB unreachable)")
         return True
-    ok = True
+    ok = _selftest_vehicles()
     tmp = os.path.join(_ROOT, "scraper", "_selftest_artifact.ndjson")
     rows = [
         {"source": "rockauto", "source_url": "https://www.rockauto.com/x",
@@ -109,8 +150,8 @@ def _selftest() -> bool:
         before = _count_selftest_rows()
         n = ingest([tmp], batch_id="selftest_batch")
         after = _count_selftest_rows()           # fresh connection -> sees the commit
-        ok = (n == 2) and (after - before == 2)
-        print(f"  [{'PASS' if ok else 'FAIL'}] ingested 2 selftest rows (before={before} after={after})")
+        ok = ok and (n == 2) and (after - before == 2)
+        print(f"  [{'PASS' if ok else 'FAIL'}] ingested 2 selftest part rows (before={before} after={after})")
     finally:
         _cleanup_selftest_rows()
         try:
