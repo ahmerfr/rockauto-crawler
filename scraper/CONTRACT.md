@@ -66,6 +66,7 @@ Listing = {
   "part_number": str,            # manufacturer part number
   "name": str, "description": str|None,
   "price": float|None, "core_charge": float|None, "weight": float|None,
+  "variants": list[dict]|None,   # "Choose Type" dropdown: [{type,price_each,pack_total,raw}]; None if single-price. price = cheapest price_each.
   "image_urls": list[str],       # -> JSON
   "attributes": list[dict],      # [{"name":..,"value":..}] -> JSON
   "warehouse_code": str|None, "quantity": int|None,

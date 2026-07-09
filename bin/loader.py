@@ -336,6 +336,22 @@ class Loader:
                                 {"part_id": pid, "name": aname, "value": aval},
                                 {"part_id": pid, "name": aname, "value": aval})
 
+        # 4b. "Choose Type" dropdown variants -> part_attributes rows the storefront
+        # already renders. name="variant:<type>", value=per-each price (+ pack total).
+        for v in _jload(row.get("variants"), []):
+            if not isinstance(v, dict):
+                continue
+            vtype = v.get("type")
+            pe = _f(v.get("price_each"))
+            if not vtype or pe is None:
+                continue
+            pt = _f(v.get("pack_total"))
+            aname = _t(f"variant:{vtype}", 120)
+            aval = _t(str(pe) if pt is None else f"{pe} (pack ${pt})", 255)
+            self._insert_absent("part_attributes",
+                                {"part_id": pid, "name": aname, "value": aval},
+                                {"part_id": pid, "name": aname, "value": aval})
+
         # 5. interchange (has uq part_id+number_norm -> plain upsert)
         for x in _jload(row.get("interchange"), []):
             if not isinstance(x, dict):
@@ -582,6 +598,11 @@ def selftest() -> int:
                 "price": 42.50, "core_charge": 0, "weight": 3.2,
                 "image_urls": json.dumps(["https://example/selftest/img1.jpg"]),
                 "attributes": json.dumps([{"name": "Material", "value": "Ceramic"}]),
+                "variants": json.dumps([
+                    {"type": "Prediluted", "price_each": 6.15, "pack_total": None,
+                     "raw": "Prediluted ($6.15/Each)"},
+                    {"type": "Concentrated", "price_each": 6.09, "pack_total": 36.54,
+                     "raw": "Concentrated ($6.09/Each) $36.54"}]),
                 "warehouse_code": "MAIN", "quantity": 7, "fitment_note": "Front",
                 "warranty": "12 months",
                 "interchange": json.dumps([{"brand": "OtherCo", "number": "OC-99",
@@ -639,6 +660,9 @@ def selftest() -> int:
 
         cur.execute("SELECT COUNT(*) n FROM part_interchange WHERE part_id=%s", [pid])
         assert cur.fetchone()["n"] == 1, "interchange not loaded"
+        cur.execute("SELECT COUNT(*) n FROM part_attributes "
+                    "WHERE part_id=%s AND name LIKE 'variant:%%'", [pid])
+        assert cur.fetchone()["n"] == 2, "variant attributes not loaded"
         cur.execute("SELECT COUNT(*) n FROM part_images WHERE part_id=%s", [pid])
         assert cur.fetchone()["n"] == 1, "image not loaded"
         cur.execute("SELECT quantity FROM inventory WHERE part_id=%s", [pid])

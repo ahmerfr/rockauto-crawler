@@ -192,25 +192,31 @@ def build_child_payload(child: dict, parent_payload: dict | None) -> dict:
     if mkts:
         parent_ctx["markets"] = mkts
     ntype = child.get("nodetype")
-    if ntype == "parttype":
-        # Deterministic: a parttype's jsn carries its exact parent groupname, and
-        # its nav label is the part-type name. Build the full path from the node
-        # ITSELF so it's identical no matter which route reached it (a parttype can
-        # be enqueued both from the carcode page and via groupname expansion).
-        grp = (child.get("jsn") or {}).get("groupname")
-        ptname = node_display_name(child)              # 'Filter', 'Brake Pad', ...
-        if grp and ptname and grp.strip().lower() != ptname.strip().lower():
-            parent_ctx["category_path"] = f"{str(grp).strip()}>{ptname}"
-        elif ptname:
-            parent_ctx["category_path"] = ptname
-    elif ntype in ("category", "group", "groupname"):
-        name = node_display_name(child)
+    if ntype in ("category", "subcategory", "group", "groupname", "parttype"):
+        # Accumulate the nav label of EVERY category level, arbitrarily deep, so a
+        # nested tree (Group>Subgroup>Parttype>...) keeps every rung — not just the
+        # last two. Route-independent: each rung appends its own display name to
+        # whatever the parent already accumulated.
+        name = node_display_name(child)              # 'Brake Pad', 'Disc Brake Pad', ...
+        prev = parent_ctx.get("category_path")
+        # A parttype's jsn names its immediate parent groupname. Use it to SEED the
+        # path only when we reached the parttype without having accumulated a group
+        # (e.g. straight off the carcode page) — so we still get 'Group>Parttype'
+        # rather than a bare 'Parttype'. If a group was already accumulated, prev is
+        # set and this seed is skipped (no duplication).
+        if ntype == "parttype" and not prev:
+            grp = (child.get("jsn") or {}).get("groupname")
+            if grp and str(grp).strip():
+                prev = str(grp).strip()
         if name:
-            prev = parent_ctx.get("category_path")
             if not prev:
                 parent_ctx["category_path"] = name
             elif prev.split(">")[-1].strip().lower() != name.strip().lower():
                 parent_ctx["category_path"] = f"{prev}>{name}"
+            else:  # same as parent tail (seed==name, or a repeated node): keep prev
+                parent_ctx["category_path"] = prev
+        elif prev:
+            parent_ctx["category_path"] = prev
     return {
         "jsn": child.get("jsn"),
         "ctx": parent_ctx,
@@ -249,9 +255,9 @@ def stage_listings(conn, listings: list[dict], batch_id: str) -> int:
                     " trim, market, category_path, brand_name, part_number, name, "
                     " description, price, core_charge, weight, image_urls, "
                     " attributes, warehouse_code, quantity, fitment_note, "
-                    " warranty, interchange, doc_urls, batch_id) "
+                    " warranty, interchange, doc_urls, variants, batch_id) "
                     "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
-                    "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                     (
                         lst.get("source", "rockauto"),
                         lst.get("source_url"),
@@ -281,6 +287,7 @@ def stage_listings(conn, listings: list[dict], batch_id: str) -> int:
                         lst.get("warranty"),
                         _json_or_none(lst.get("interchange")),
                         _json_or_none(lst.get("doc_urls")),
+                        _json_or_none(lst.get("variants")),
                         batch_id,
                     ),
                 )
@@ -583,6 +590,35 @@ def _selftest() -> bool:
           "category_path appended with '>'")
     check(p2["ctx"]["make"] == "honda" and p2["ctx"]["model"] == "accord",
           "vehicle ctx inherited down the tree")
+
+    # DEEP (3+ level) accumulation: category > group > parttype must keep EVERY
+    # rung, not collapse to groupname>parttype (the bug this build fixes).
+    child_pt = {"nodetype": "parttype", "label": "Disc Brake Pad",
+                "jsn": {"groupname": "Brake & Wheel Hub"}}
+    p3 = build_child_payload(child_pt, p2)
+    check(p3["ctx"]["category_path"] == "Brake & Wheel Hub>Brake Pad>Disc Brake Pad",
+          f"deep 3-level path lost a rung: {p3['ctx']['category_path']}")
+    # A 4th nesting rung still accumulates.
+    child_sub = {"nodetype": "parttype", "label": "Semi-Metallic",
+                 "jsn": {"groupname": "Brake & Wheel Hub"}}
+    p4 = build_child_payload(child_sub, p3)
+    check(p4["ctx"]["category_path"]
+          == "Brake & Wheel Hub>Brake Pad>Disc Brake Pad>Semi-Metallic",
+          f"deep 4-level path lost a rung: {p4['ctx']['category_path']}")
+    # Route-independence: a parttype reached WITHOUT a traversed group still seeds
+    # 'Group>Parttype' from its jsn groupname (no bare parttype, no dupe group).
+    p_direct = build_child_payload(child_pt, {"ctx": {"make": "honda"}})
+    check(p_direct["ctx"]["category_path"] == "Brake & Wheel Hub>Disc Brake Pad",
+          f"parttype off carcode page mis-seeded: {p_direct['ctx']['category_path']}")
+
+    # "All Engines" AND specific-engine carcode nodes must BOTH enqueue (parts can
+    # differ per engine; our carcode encodes the engine). Neither is dropped.
+    check(should_enqueue({"nodetype": "carcode", "carcode": "0",
+                          "engine": "All Engines", "markets": ["US"]}),
+          "should_enqueue keeps the 'All Engines' node")
+    check(should_enqueue({"nodetype": "carcode", "carcode": "3309958",
+                          "engine": "2.4L L4", "markets": ["US"]}),
+          "should_enqueue keeps a specific-engine carcode node")
 
     # listing_ctx exposes category_path
     lc = listing_ctx(p2)

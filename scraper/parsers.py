@@ -42,6 +42,8 @@ CAPTCHA_PATH = "/captcha/"
 
 # A money token like "$1,234.56" or "$ 45.00". Group 1 = numeric (commas kept).
 _PRICE_RE = re.compile(r"\$\s*([0-9][0-9,]*\.\d{2})")
+# A per-each variant price inside a "Choose Type" option: "$6.15/Each".
+_EACH_RE = re.compile(r"\$\s*([0-9][0-9,]*\.\d{2})\s*/\s*Each", re.I)
 # "Name: value" attribute rows.
 _ATTR_RE = re.compile(r"^\s*([A-Za-z][\w /&.+'\-]*?)\s*:\s*(.+?)\s*$")
 
@@ -423,6 +425,36 @@ def _extract_price_by_index(soup, idx: str) -> tuple[float | None, float | None]
     return price, core
 
 
+def _extract_variants(soup, idx: str) -> list[dict] | None:
+    """Parse a "Choose Type" dropdown in listingtd[N][price] into per-variant dicts.
+
+    Each <option> looks like "Prediluted ($6.15/Each)" or, for a pack,
+    "Prediluted ($6.09/Each) $36.54". Returns
+    [{type, price_each, pack_total, raw}] or None when there's no such select
+    (single-price / out-of-stock parts). Options without a "$X/Each" token
+    (e.g. the "Choose Type" placeholder) are skipped."""
+    pcell = soup.find(id=f"listingtd[{idx}][price]") or soup.find(id=f"dprice[{idx}][td]")
+    if pcell is None:
+        return None
+    sel = pcell.find("select")
+    if sel is None:
+        return None
+    out: list[dict] = []
+    for opt in sel.find_all("option"):
+        raw = _text(opt)
+        m = _EACH_RE.search(raw)
+        if not m:
+            continue  # placeholder / non-priced option
+        price_each = float(m.group(1).replace(",", ""))
+        type_name = raw.split("(", 1)[0].strip() or None
+        # A pack total is a second $-amount AFTER the "/Each" token.
+        pt = _PRICE_RE.search(raw[m.end():])
+        pack_total = float(pt.group(1).replace(",", "")) if pt else None
+        out.append({"type": type_name, "price_each": price_each,
+                    "pack_total": pack_total, "raw": raw})
+    return out or None
+
+
 def _extract_attributes_and_desc(cont, name_el) -> tuple[list[dict], str | None]:
     """
     Walk .listing-text-row rows. Rows shaped 'Name: value' become attributes;
@@ -642,6 +674,12 @@ def parse_listings(html: str, ctx: dict) -> list[dict]:
                 if core_charge is None:
                     core_charge = c2
 
+            # "Choose Type" dropdown parts: capture EVERY variant; the scalar
+            # price stays the cheapest per-each (storefront 'from' price).
+            variants = _extract_variants(soup, idx) if idx else None
+            if variants:
+                price = min(v["price_each"] for v in variants)
+
             # Product photo (index-keyed structure), else container-scoped images.
             image_urls = _extract_product_images(soup, idx) if idx else []
             if not image_urls:
@@ -664,6 +702,7 @@ def parse_listings(html: str, ctx: dict) -> list[dict]:
                     "name": name,
                     "description": description,
                     "price": price,
+                    "variants": variants,
                     "core_charge": core_charge,
                     "weight": weight,
                     "image_urls": image_urls,
@@ -821,7 +860,12 @@ if __name__ == "__main__":
           </td>
           <td id="listingtd[3][price]">
             <span id="dprice[3][td]"></span>Choose Type at Left
-            <select><option>Prediluted ($8.79/Each)</option><option>Concentrated ($6.15/Each)</option></select>
+            <select>
+              <option value="">Choose Type</option>
+              <option>Prediluted ($8.79/Each)</option>
+              <option>Concentrated ($6.15/Each)</option>
+              <option>Concentrated ($6.09/Each) $36.54</option>
+            </select>
           </td>
         </tr>
       </tbody>
@@ -845,14 +889,29 @@ if __name__ == "__main__":
     parts = parse_listings(LISTING_HTML, CTX)
     check(len(parts) == 3, f"parse_listings: expected 3 parts, got {len(parts)}")
     fvp = next((p for p in parts if p["part_number"] == "GREEN5050GAL"), None)
-    check(fvp is not None and fvp["price"] == 6.15,
-          f"variant 'Choose Type' price should be cheapest 6.15, got {fvp and fvp['price']}")
+    check(fvp is not None, "variant part GREEN5050GAL missing")
+    if fvp:
+        # scalar price = cheapest per-each across all variants (the 'from' price)
+        check(fvp["price"] == 6.09,
+              f"variant scalar price should be cheapest 6.09, got {fvp['price']}")
+        vs = fvp["variants"]
+        check(isinstance(vs, list) and len(vs) == 3,
+              f"expected 3 parsed variants (placeholder skipped), got {vs}")
+        if isinstance(vs, list) and len(vs) == 3:
+            pred = next((v for v in vs if v["type"] == "Prediluted"), None)
+            pack = next((v for v in vs if v["pack_total"] is not None), None)
+            check(pred is not None and pred["price_each"] == 8.79
+                  and pred["pack_total"] is None,
+                  f"Prediluted variant wrong: {pred}")
+            check(pack is not None and pack["type"] == "Concentrated"
+                  and pack["price_each"] == 6.09 and pack["pack_total"] == 36.54,
+                  f"pack variant wrong: {pack}")
 
     EXPECTED_LISTING_KEYS = {
         "source", "source_url", "make_name", "model_name", "year",
         "engine_name", "liters", "cylinders", "fuel_type", "aspiration", "trim",
         "market", "category_path", "brand_name", "part_number", "name", "description",
-        "price", "core_charge", "weight", "image_urls", "attributes",
+        "price", "variants", "core_charge", "weight", "image_urls", "attributes",
         "warehouse_code", "quantity", "fitment_note", "warranty",
         "interchange", "doc_urls",
     }
@@ -867,6 +926,7 @@ if __name__ == "__main__":
         check(p0["name"] == "QuietCast Ceramic Brake Pad Set",
               f"name wrong: {p0['name']}")
         check(p0["price"] == 45.79, f"price wrong: {p0['price']}")
+        check(p0["variants"] is None, f"single-price variants should be None: {p0['variants']}")
         check(p0["core_charge"] == 12.00, f"core wrong: {p0['core_charge']}")
         check(p0["year"] == 2015 and isinstance(p0["year"], int),
               "ctx year->int failed")

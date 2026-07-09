@@ -55,6 +55,14 @@ SET @s := IF(@c=0, 'ALTER TABLE stg_listings
                       ADD COLUMN doc_urls    JSON NULL', 'DO 0');
 PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
 
+-- stg_listings.variants: per-part "Choose Type" dropdown options as JSON
+-- [{type,price_each,pack_total,raw}]; separate guard because the block above is
+-- keyed on `warranty` which already exists on previously-migrated DBs.
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS
+           WHERE TABLE_SCHEMA='supreme_parts' AND TABLE_NAME='stg_listings' AND COLUMN_NAME='variants');
+SET @s := IF(@c=0, 'ALTER TABLE stg_listings ADD COLUMN variants JSON NULL', 'DO 0');
+PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+
 -- crawl_frontier.payload: carries the node jsn + accumulated fitment context so the
 -- crawl is fully resumable across restarts without re-deriving state.
 SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS
