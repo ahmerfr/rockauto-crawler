@@ -401,16 +401,25 @@ def _extract_price_and_core(cont) -> tuple[float | None, float | None]:
 
 
 def _extract_price_by_index(soup, idx: str) -> tuple[float | None, float | None]:
-    """RockAuto puts each part's price/core in cells keyed by the part row index,
-    OUTSIDE the part's text container: <span id="dprice[N][td]">$18.27</span> and
-    a core cell at listingtd[N][core]. Pull them by index."""
+    """RockAuto keeps each part's price/core in cells keyed by the row index,
+    OUTSIDE the text container: listingtd[N][price] (a single $ OR a 'Choose Type'
+    variant <select>), core in listingtd[N][core].
+
+    ponytail: take the CHEAPEST $-token in the price cell (the storefront's
+    'from $X.XX'). One rule covers single-price, multi-variant dropdowns (empty
+    dprice span → $0 was the bug), and out-of-stock (no $ → None) — no need to
+    parse the dropdown's exact markup."""
     price = core = None
-    pe = soup.find(id=f"dprice[{idx}][td]") or soup.find(id=f"listingtd[{idx}][price]")
-    if pe is not None:
-        price = _money(pe.get_text(" ", strip=True))
     ce = soup.find(id=f"dprice[{idx}][core]") or soup.find(id=f"listingtd[{idx}][core]")
     if ce is not None:
         core = _money(ce.get_text(" ", strip=True))
+    pcell = soup.find(id=f"listingtd[{idx}][price]") or soup.find(id=f"dprice[{idx}][td]")
+    if pcell is not None:
+        amts = [float(m.group(1).replace(",", ""))
+                for m in _PRICE_RE.finditer(pcell.get_text(" ", strip=True))]
+        amts = [a for a in amts if a and a != core]
+        if amts:
+            price = min(amts)
     return price, core
 
 
@@ -803,6 +812,19 @@ if __name__ == "__main__":
           <img data-src="//img.rockauto.com/denso2344209.jpg">
         </td></tr>
       </tbody>
+      <tbody class="listing-container-border" id="listingcontainer[3]">
+        <tr>
+          <td>
+            <span class="listing-final-manufacturer">FVP</span>
+            <span class="listing-final-partnumber">GREEN5050GAL</span>
+            <a class="span-link-out-desc" href="/z">Green Antifreeze/Coolant</a>
+          </td>
+          <td id="listingtd[3][price]">
+            <span id="dprice[3][td]"></span>Choose Type at Left
+            <select><option>Prediluted ($8.79/Each)</option><option>Concentrated ($6.15/Each)</option></select>
+          </td>
+        </tr>
+      </tbody>
       <tbody class="listing-container-border">
         <tr><td>
           <!-- malformed row: no brand, no part number -> must be skipped -->
@@ -821,12 +843,15 @@ if __name__ == "__main__":
     }
 
     parts = parse_listings(LISTING_HTML, CTX)
-    check(len(parts) == 2, f"parse_listings: expected 2 parts, got {len(parts)}")
+    check(len(parts) == 3, f"parse_listings: expected 3 parts, got {len(parts)}")
+    fvp = next((p for p in parts if p["part_number"] == "GREEN5050GAL"), None)
+    check(fvp is not None and fvp["price"] == 6.15,
+          f"variant 'Choose Type' price should be cheapest 6.15, got {fvp and fvp['price']}")
 
     EXPECTED_LISTING_KEYS = {
         "source", "source_url", "make_name", "model_name", "year",
         "engine_name", "liters", "cylinders", "fuel_type", "aspiration", "trim",
-        "category_path", "brand_name", "part_number", "name", "description",
+        "market", "category_path", "brand_name", "part_number", "name", "description",
         "price", "core_charge", "weight", "image_urls", "attributes",
         "warehouse_code", "quantity", "fitment_note", "warranty",
         "interchange", "doc_urls",
