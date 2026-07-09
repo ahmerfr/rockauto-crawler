@@ -66,6 +66,14 @@ def shard(items: list, index: int, total: int) -> list:
     return items[index::total]
 
 
+def _make_cap(budget: int, n_makes: int) -> int:
+    """Per-make request ceiling: split the run budget across this shard's makes so
+    DFS can't drill ONE make until the whole budget dies (which left every make
+    past ~Honda undiscovered). Floor of 50 keeps a make reachable when budget is
+    tiny."""
+    return max(50, budget // max(1, n_makes))
+
+
 def make_seed_nodes(makes: list[dict]) -> list[dict]:
     """Turn make TreeNodes into BFS frontier nodes."""
     seeds = []
@@ -134,7 +142,7 @@ def run(shard_index: int, shard_total: int, out_path: str,
     """Crawl this shard, writing Listing rows as NDJSON to `out_path`."""
     started = time.monotonic()
     stats = {"nodes": 0, "listings": 0, "captchas": 0, "blocked": 0, "requests": 0,
-             "images": 0, "skipped": 0}
+             "images": 0, "skipped": 0, "capped": 0}
     img_root = os.path.join(os.path.dirname(out_path) or ".", "images")
 
     proxies = ProxyManager()
@@ -154,6 +162,9 @@ def run(shard_index: int, shard_total: int, out_path: str,
         print(f"[shard] {shard_index}/{shard_total}: {len(mine)}/{len(all_makes)} makes", flush=True)
         seeds = make_seed_nodes(mine)
 
+    make_cap = _make_cap(budget, len(seeds))
+    per_make: dict[str, int] = {}         # requests spent per make this run
+    print(f"[cap] per-make request ceiling = {make_cap}", flush=True)
     frontier: deque = deque(seeds)
     prior = _load_visited(visited_file)   # LEAF keys crawled in earlier runs (from cache)
     seen_this_run: set[str] = set()       # in-run dedup (all node types)
@@ -198,7 +209,19 @@ def run(shard_index: int, shard_total: int, out_path: str,
                 stats["skipped"] += 1
                 continue
 
+            # Per-make budget: once a make used its slice, defer its subtree so the
+            # remaining budget spreads to OTHER makes. Without this, DFS drilled one
+            # make till the global budget died and A–G makes were never discovered.
+            # ponytail: fixed cap = budget/makes; raise it if depth-per-run matters
+            # more than breadth (the leaf cache already deepens makes across runs).
+            mk = ((node.get("payload") or {}).get("ctx") or {}).get("make") or "?"
+            if per_make.get(mk, 0) >= make_cap:
+                seen_this_run.add(key)
+                stats["capped"] += 1
+                continue
+
             stats["requests"] += 1
+            per_make[mk] = per_make.get(mk, 0) + 1
             try:
                 listings, kids = process(client, node)
             except Blocked:
@@ -295,6 +318,9 @@ def _selftest() -> bool:
     check("seed node shape", seeds[0]["node_type"] == "make"
           and seeds[0]["href"] == "/en/catalog/honda"
           and seeds[0]["payload"]["ctx"]["make"] == "HONDA")
+    # cap splits budget across makes; floor keeps a make reachable on tiny budgets
+    check("make cap splits budget", _make_cap(2500, 12) == 208)
+    check("make cap floor", _make_cap(100, 50) == 50)
     print("PASS" if ok else "FAIL")
     return ok
 
