@@ -92,8 +92,9 @@ def main():
             if n.get("nodetype") == "groupname"]
     if not cats:
         print("NO groupname nodes at carcode level."); _finish(); return
-    # prefer Brake & Wheel Hub if present (known to have parts)
-    cat = next((c for c in cats if "brake" in str(c.get("jsn", {})).lower()), cats[0])
+    # target Cooling System — its Coolant/Antifreeze parts use "Choose Type"
+    # variant pricing (the $0.00 bug we're chasing).
+    cat = next((c for c in cats if "cool" in str(c.get("jsn", {})).lower()), cats[0])
     nodes5, _ = dump("5_groupname", client.get(cat["href"]) if cat.get("href")
                      else client.fetch_children(cat["jsn"]))
 
