@@ -23,7 +23,8 @@ SCOPE = {
     # Top-level category names to keep (lowercase substring match). [] = all.
     "categories": [],
     # Markets to include (RockAuto market checkboxes). US only = fewer nodes.
-    "markets": ["US"],
+    # SP_MARKETS="" (empty) = worldwide (every market). CSV to restrict, e.g. "US,MX".
+    "markets": [m.strip().upper() for m in os.getenv("SP_MARKETS", "US").split(",") if m.strip()],
 }
 
 # ---- POLITENESS / RATE LIMITING -----------------------------------------

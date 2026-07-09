@@ -128,11 +128,14 @@ class Loader:
         self._part: dict[str, int] = {}
 
     # -- generic idempotent upsert that returns the row id ------------------
-    def _upsert_id(self, table: str, vals: dict, update_cols: list[str] | None = None) -> int:
+    def _upsert_id(self, table: str, vals: dict, update_cols: list[str] | None = None,
+                   update_exprs: dict[str, str] | None = None) -> int:
         """
         INSERT ... ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id)[, col=VALUES(col)...].
         Returns the id of the inserted OR existing row (the standard MySQL trick).
         Relies on the table having an AUTO_INCREMENT `id` and a natural UNIQUE key.
+        `update_exprs` overrides a column's update RHS (e.g. COALESCE to not clobber
+        a known value with NULL).
         """
         cols = list(vals.keys())
         collist = ",".join(f"`{c}`" for c in cols)
@@ -140,6 +143,8 @@ class Loader:
         updates = ["id=LAST_INSERT_ID(id)"]
         for c in (update_cols or []):
             updates.append(f"`{c}`=VALUES(`{c}`)")
+        for c, expr in (update_exprs or {}).items():
+            updates.append(f"`{c}`={expr}")
         sql = (f"INSERT INTO `{table}` ({collist}) VALUES ({placeholders}) "
                f"ON DUPLICATE KEY UPDATE {', '.join(updates)}")
         self.cur.execute(sql, [vals[c] for c in cols])
@@ -207,13 +212,17 @@ class Loader:
             )
         return self._brand[key]
 
-    def vehicle_id(self, make_id, model_id, year, engine_id, trim, veh_slug) -> int:
+    def vehicle_id(self, make_id, model_id, year, engine_id, trim, veh_slug,
+                   market=None) -> int:
         if veh_slug not in self._vehicle:
             self._vehicle[veh_slug] = self._upsert_id(
                 "vehicles",
                 {"make_id": make_id, "model_id": model_id, "year": _i(year),
-                 "engine_id": engine_id, "trim": _t(trim, 80), "slug": veh_slug},
+                 "engine_id": engine_id, "trim": _t(trim, 80), "slug": veh_slug,
+                 "market": _t(market, 64)},
                 update_cols=["engine_id", "trim"],
+                # never let a market-less path (stg_fitment) blank a known market
+                update_exprs={"market": "COALESCE(VALUES(market), market)"},
             )
         return self._vehicle[veh_slug]
 
@@ -288,7 +297,8 @@ class Loader:
                                  row.get("aspiration"))
             vslug = vehicle_slug(make_name, row["model_name"], year,
                                  row.get("engine_name"), row.get("trim"))
-            vehicle_id = self.vehicle_id(mk, mo, year, eng, row.get("trim"), vslug)
+            vehicle_id = self.vehicle_id(mk, mo, year, eng, row.get("trim"), vslug,
+                                         row.get("market"))
 
         # 2. brand + category + part
         brand_id = self.brand_id(row.get("brand_name"))

@@ -557,6 +557,10 @@ def _base_listing(ctx: dict) -> dict:
         "category_path": ctx.get("category_path") or "",
         "warehouse_code": ctx.get("warehouse_code"),
         "quantity": ctx.get("quantity"),
+        # CSV of market country codes ('US,MX'); None when unknown. Loader stores
+        # it on the vehicle so non-US can be filtered out later.
+        "market": (",".join(ctx["markets"]) if isinstance(ctx.get("markets"), list)
+                   else ctx.get("markets")) or None,
     }
 
 

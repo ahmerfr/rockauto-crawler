@@ -70,6 +70,7 @@ jobs:
           SP_MAX_DELAY: "2.8"
           SP_YEAR_MIN: "1900"        # widen from default 2010 -> ALL years RockAuto lists
           SP_YEAR_MAX: "2026"
+          SP_MARKETS: ""             # empty = worldwide (all markets); market saved to vehicles.market
           VISITED_FILE: "coverage/visited.txt"
           VISITED_OUT: "artifacts/visited-${{ matrix.index }}.txt"
         run: |

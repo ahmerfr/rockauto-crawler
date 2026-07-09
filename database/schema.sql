@@ -49,6 +49,10 @@ CREATE TABLE vehicles (
   engine_id INT UNSIGNED NULL,
   trim      VARCHAR(80) NULL,
   slug      VARCHAR(180) NOT NULL,
+  -- CSV of RockAuto market country codes this vehicle is sold in (e.g. 'US,MX').
+  -- Lets you keep everything now but drop non-US later: DELETE ... WHERE market
+  -- NOT LIKE '%US%'. NULL = market unknown (kept).
+  market    VARCHAR(64) NULL,
   UNIQUE KEY uq_vehicle (make_id, model_id, `year`, engine_id, trim),
   -- Deterministic slug is the ingest idempotency anchor. It is never NULL, so it
   -- dedups vehicles even when trim/engine_id are NULL (NULLs are distinct in the

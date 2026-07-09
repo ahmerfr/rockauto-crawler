@@ -19,6 +19,7 @@ CREATE TABLE stg_listings (
   fuel_type      VARCHAR(30) NULL,
   aspiration     VARCHAR(30) NULL,
   trim           VARCHAR(80) NULL,
+  market         VARCHAR(64) NULL,                 -- CSV market codes 'US,MX' -> vehicles.market
   category_path  VARCHAR(400) NULL,                -- 'Brake & Wheel Hub>Brake Pad'
   brand_name     VARCHAR(120) NULL,
   part_number    VARCHAR(100) NULL,

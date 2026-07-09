@@ -186,6 +186,11 @@ def build_child_payload(child: dict, parent_payload: dict | None) -> dict:
         v = child.get(f)
         if v is not None and v != "":
             parent_ctx[f] = v
+    # Market codes ride the ctx (NOT a _CTX_FIELDS coord — must not affect vehicle
+    # identity/dedup) so the leaf can record which markets sell this vehicle.
+    mkts = child.get("markets")
+    if mkts:
+        parent_ctx["markets"] = mkts
     ntype = child.get("nodetype")
     if ntype == "parttype":
         # Deterministic: a parttype's jsn carries its exact parent groupname, and
@@ -241,11 +246,11 @@ def stage_listings(conn, listings: list[dict], batch_id: str) -> int:
                     "INSERT INTO stg_listings "
                     "(source, source_url, make_name, model_name, `year`, "
                     " engine_name, liters, cylinders, fuel_type, aspiration, "
-                    " trim, category_path, brand_name, part_number, name, "
+                    " trim, market, category_path, brand_name, part_number, name, "
                     " description, price, core_charge, weight, image_urls, "
                     " attributes, warehouse_code, quantity, fitment_note, "
                     " warranty, interchange, doc_urls, batch_id) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
                     "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                     (
                         lst.get("source", "rockauto"),
@@ -259,6 +264,7 @@ def stage_listings(conn, listings: list[dict], batch_id: str) -> int:
                         lst.get("fuel_type"),
                         lst.get("aspiration"),
                         lst.get("trim"),
+                        lst.get("market"),
                         lst.get("category_path"),
                         lst.get("brand_name"),
                         lst.get("part_number"),

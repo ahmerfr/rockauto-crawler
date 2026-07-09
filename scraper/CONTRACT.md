@@ -60,6 +60,7 @@ Listing = {
   "make_name": str, "model_name": str, "year": int,
   "engine_name": str|None, "liters": float|None, "cylinders": int|None,
   "fuel_type": str|None, "aspiration": str|None, "trim": str|None,
+  "market": str|None,            # CSV market codes "US,MX" -> vehicles.market
   "category_path": str,          # "Brake & Wheel Hub>Brake Pad"
   "brand_name": str,             # e.g. "Bosch"
   "part_number": str,            # manufacturer part number
