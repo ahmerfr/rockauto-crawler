@@ -1,0 +1,20 @@
+name: RockAuto Leaf Probe
+on:
+  workflow_dispatch:
+jobs:
+  leaf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: |
+          sudo apt-get update && sudo apt-get install -y tesseract-ocr
+          pip install -r requirements.txt
+      - name: Measure part-types per vehicle
+        env:
+          SP_USE_PROXIES: "0"
+          SP_SOLVE_CAPTCHA: "1"
+        run: python scraper/leaf_probe.py
