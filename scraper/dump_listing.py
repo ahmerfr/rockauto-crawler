@@ -172,6 +172,29 @@ def main() -> int:
         print(f"parser._extract_product_images -> {len(found)} url(s)", flush=True)
         for u in found:
             print(f"   {u}", flush=True)
+
+        # Does the part's "Info" (moreinfo.php) page hold the carousel's other photos?
+        info = None
+        for a in soup.find_all("a", href=True):
+            if "moreinfo.php" in a["href"] and f"[{idx}]" in str(a.parent)[:400]:
+                info = a["href"]
+                break
+        if info is None:
+            row = soup.find(id=f"vew_partnumber[{idx}]")
+            anc = row.find_parent("tr") if row else None
+            if anc:
+                a = anc.find("a", href=re.compile("moreinfo.php"))
+                info = a["href"] if a else None
+        print(f"\n--- moreinfo.php for this row: {info} ---", flush=True)
+        if info:
+            try:
+                ihtml = client.get(info)
+                iph = sorted(set(re.findall(r"[^\"'\s]*?/info/[^\"'\s]*?_ra_[a-z]\.jpg", ihtml, re.I)))
+                print(f"  moreinfo page length={len(ihtml)}  photos found={len(iph)}", flush=True)
+                for u in iph[:30]:
+                    print(f"    {u}", flush=True)
+            except Exception as exc:  # noqa: BLE001
+                print(f"  moreinfo fetch failed: {exc}", flush=True)
         for cid in (f"inlineimg_container[{idx}]", f"listing_image_table[{idx}]"):
             cont = soup.find(id=cid)
             if cont is None:
