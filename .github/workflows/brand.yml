@@ -1,0 +1,90 @@
+name: RockAuto Single Brand
+
+# One brand, one fresh Azure IP, full depth (leaves + dropdown variants + images).
+# For verifying data quality before a full-catalog crawl. Re-dispatchable: the
+# visited-leaf cache accumulates across runs so repeated dispatches converge on
+# 100% of the brand (the loader dedupes, so overlap only adds coverage).
+
+on:
+  workflow_dispatch:
+    inputs:
+      make:
+        description: "Make slug to crawl (e.g. acura, ac, abarth)"
+        required: true
+        default: "acura"
+      budget:
+        description: "Max requests this run"
+        default: "4000"
+      max_seconds:
+        description: "Max runtime (seconds)"
+        default: "19000"
+
+jobs:
+  brand:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install tesseract OCR + Python deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Restore crawled-leaves cache (per make)
+        uses: actions/cache/restore@v4
+        with:
+          path: coverage/visited.txt
+          key: rockauto-brand-${{ github.event.inputs.make }}-${{ github.run_id }}
+          restore-keys: rockauto-brand-${{ github.event.inputs.make }}-
+
+      - name: Crawl ${{ github.event.inputs.make }}
+        env:
+          SP_USE_PROXIES: "0"
+          SP_SOLVE_CAPTCHA: "1"
+          SP_MIN_DELAY: "1.2"
+          SP_MAX_DELAY: "2.8"
+          SP_YEAR_MIN: "1900"
+          SP_YEAR_MAX: "2026"
+          SP_MARKETS: ""
+          SP_DOWNLOAD_IMAGES: "1"
+          VISITED_FILE: "coverage/visited.txt"
+          VISITED_OUT: "artifacts/visited-brand.txt"
+        run: |
+          python scraper/crawl_jsonl.py \
+            --makes "${{ github.event.inputs.make }}" \
+            --shard-total 1 \
+            --out "artifacts/shard-brand.ndjson" \
+            --budget "${{ github.event.inputs.budget || '4000' }}" \
+            --max-seconds "${{ github.event.inputs.max_seconds || '19000' }}"
+
+      - name: Upload artifact (NDJSON + thumbnails + new-leaves list)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rockauto-brand-${{ github.event.inputs.make }}
+          path: |
+            artifacts/shard-brand.ndjson
+            artifacts/images/
+            artifacts/visited-brand.txt
+          if-no-files-found: warn
+
+      - name: Merge this run's new leaves into coverage
+        if: always()
+        run: |
+          mkdir -p coverage
+          touch coverage/visited.txt
+          cat artifacts/visited-brand.txt >> coverage/visited.txt 2>/dev/null || true
+          sort -u coverage/visited.txt -o coverage/visited.txt
+          echo "leaves crawled for this make to date: $(wc -l < coverage/visited.txt)"
+
+      - name: Save updated crawled-leaves cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: coverage/visited.txt
+          key: rockauto-brand-${{ github.event.inputs.make }}-${{ github.run_id }}
