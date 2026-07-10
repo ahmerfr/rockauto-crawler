@@ -190,11 +190,34 @@ def main() -> int:
             try:
                 ihtml = client.get(info)
                 iph = sorted(set(re.findall(r"[^\"'\s]*?/info/[^\"'\s]*?_ra_[a-z]\.jpg", ihtml, re.I)))
-                print(f"  moreinfo page length={len(ihtml)}  photos found={len(iph)}", flush=True)
+                print(f"  moreinfo page length={len(ihtml)}  _ra_ photos={len(iph)}", flush=True)
                 for u in iph[:30]:
                     print(f"    {u}", flush=True)
+                isoup = BeautifulSoup(ihtml, "lxml")
+                srcs = []
+                for im in isoup.find_all("img"):
+                    for at in ("data-src", "data-original", "src"):
+                        if im.get(at):
+                            srcs.append(im[at]); break
+                print(f"  ALL <img> on moreinfo: {len(srcs)}", flush=True)
+                for u in srcs[:25]:
+                    print(f"    img: {u}", flush=True)
+                anyinfo = sorted(set(re.findall(r"[^\"'\s]{0,60}/info/[^\"'\s]{0,80}", ihtml, re.I)))
+                print(f"  any '/info/' strings: {len(anyinfo)}", flush=True)
+                for u in anyinfo[:15]:
+                    print(f"    info: {u}", flush=True)
             except Exception as exc:  # noqa: BLE001
                 print(f"  moreinfo fetch failed: {exc}", flush=True)
+
+        # Where does the LEAF page keep the carousel's image list for this row?
+        print("\n--- carousel data on the LEAF page for this row ---", flush=True)
+        for inp in soup.find_all("input", id=re.compile(rf"^\w*image\w*\[{re.escape(idx)}\]", re.I)):
+            print(f"  {inp.get('id')} = {str(inp.get('value'))[:400]}", flush=True)
+        for needle in ("imagecounter", "InlineImageManualScroll", "imgurl", "imagecount"):
+            hits = [m.start() for m in re.finditer(re.escape(needle) + rf"\[?{re.escape(idx)}?", leaf_html, re.I)]
+            if hits:
+                h = hits[0]
+                print(f"  [{needle}] first ctx: …{leaf_html[max(0,h-160):h+240]!r}…", flush=True)
         for cid in (f"inlineimg_container[{idx}]", f"listing_image_table[{idx}]"):
             cont = soup.find(id=cid)
             if cont is None:
