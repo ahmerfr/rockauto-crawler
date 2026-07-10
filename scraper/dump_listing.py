@@ -66,6 +66,10 @@ def main() -> int:
     ap.add_argument("--parttype", default="Wiper Blade")
     ap.add_argument("--part", default="18160", help="only dump this part number (blank = all)")
     ap.add_argument("--scan", default="", help="comma list of literals to hunt in the RAW page")
+    ap.add_argument("--survey", type=int, default=0,
+                    help="walk N part-type leaves under the vehicle and report EVERY "
+                         "<select> id pattern + option counts (are all dropdowns "
+                         "optionchoice[N]? does any listing carry more than one?)")
     args = ap.parse_args()
 
     client = RAClient(None)
@@ -87,6 +91,54 @@ def main() -> int:
     node = pick(kids(node["href"]), "carcode", args.engine)
     if not node:
         print("FAIL: carcode not found"); return 1
+
+    carcode_node = node
+
+    # ---- SURVEY: how uniform is the dropdown markup across many leaves? -------
+    if args.survey:
+        groups = [n for n in kids(carcode_node["href"]) if n.get("nodetype") == "groupname"]
+        print(f"\n[survey] {len(groups)} groups under this vehicle", flush=True)
+        id_pat: dict[str, int] = {}
+        multi_select_rows = 0
+        rows_with_select = 0
+        rows_total = 0
+        max_opts = 0
+        leaves_done = 0
+        for g in groups:
+            if leaves_done >= args.survey:
+                break
+            for pt in [n for n in kids(g["href"]) if n.get("nodetype") == "parttype"]:
+                if leaves_done >= args.survey:
+                    break
+                leaves_done += 1
+                lsoup = BeautifulSoup(client.get(pt["href"]), "lxml")
+                row_ids = [re.match(r"^listingtd\[(\d+)\]\[price\]$", e.get("id")).group(1)
+                           for e in lsoup.find_all(id=re.compile(r"^listingtd\[\d+\]\[price\]$"))]
+                rows_total += len(row_ids)
+                for sel in lsoup.find_all("select"):
+                    sid = sel.get("id") or "(no-id)"
+                    pat = re.sub(r"\d+", "N", sid)
+                    id_pat[pat] = id_pat.get(pat, 0) + 1
+                    n_opts = len([o for o in sel.find_all("option") if (o.get("value") or "").strip()])
+                    max_opts = max(max_opts, n_opts)
+                for ridx in row_ids:
+                    sels = lsoup.find_all("select", id=re.compile(rf"^optionchoice\[{ridx}\]"))
+                    if len(sels) >= 1:
+                        rows_with_select += 1
+                    if len(sels) > 1:
+                        multi_select_rows += 1
+                print(f"  [{leaves_done}] {_label(g)} > {_label(pt)}: "
+                      f"{len(row_ids)} rows", flush=True)
+        print("\n" + "=" * 70, flush=True)
+        print(f"[survey] leaves={leaves_done} listing_rows={rows_total}", flush=True)
+        print(f"[survey] rows carrying an optionchoice select: {rows_with_select}", flush=True)
+        print(f"[survey] rows with MORE THAN ONE optionchoice select: {multi_select_rows}", flush=True)
+        print(f"[survey] max options in any select: {max_opts}", flush=True)
+        print("[survey] every <select> id pattern seen on these pages:", flush=True)
+        for pat, n in sorted(id_pat.items(), key=lambda kv: -kv[1]):
+            print(f"    {n:>5}x  {pat}", flush=True)
+        print("=" * 70, flush=True)
+        return 0
 
     node = pick(kids(node["href"]), "groupname", args.group)
     if not node:
