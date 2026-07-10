@@ -22,6 +22,7 @@ $router->get('/api/tree/makes', 'ApiController@treeMakes');
 $router->get('/api/tree/years', 'ApiController@treeYears');
 $router->get('/api/tree/models', 'ApiController@models');
 $router->get('/api/tree/vehicles', 'ApiController@vehicles');
+$router->get('/api/tree/groups', 'ApiController@treeGroups');
 $router->get('/api/tree/categories', 'ApiController@treeCategories');
 $router->get('/api/tree/parts', 'ApiController@treeParts');
 

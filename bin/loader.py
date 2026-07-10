@@ -267,7 +267,9 @@ class Loader:
             "name": _t(name, 255),
             "slug": slug,
             "description": listing.get("description"),
-            "price": _f(listing.get("price")) or 0,
+            # price stays NULL when RockAuto shows none (out of stock). `or 0` here
+            # rendered every out-of-stock part as a real "$0.00" in the storefront.
+            "price": _f(listing.get("price")),
             "core_charge": _f(listing.get("core_charge")) or 0,
             "weight": _f(listing.get("weight")),
             "warranty": _t(listing.get("warranty"), 160),
@@ -629,6 +631,21 @@ def selftest() -> int:
                 "warehouse_code": None, "quantity": None, "fitment_note": None,
                 "warranty": None, "interchange": None, "doc_urls": None,
             },
+            {
+                # Out-of-stock: RockAuto shows no price at all. price MUST stay NULL,
+                # never collapse to 0.00 (which the storefront renders as "$0.00").
+                "source": "rockauto", "source_url": "https://example/selftest/3",
+                "make_name": "SELFTEST Make", "model_name": "SELFTEST Model",
+                "year": 2021, "engine_name": "2.0L L4", "liters": 2.0, "cylinders": 4,
+                "fuel_type": "Gas", "aspiration": "NA", "trim": "SE",
+                "category_path": "SELFTEST Cat>SELFTEST Sub",
+                "brand_name": "SELFTEST Brand", "part_number": "SELFTEST-0003",
+                "name": "SELFTEST Out Of Stock", "description": None,
+                "price": None, "core_charge": None, "weight": None,
+                "image_urls": None, "attributes": None,
+                "warehouse_code": None, "quantity": None, "fitment_note": None,
+                "warranty": None, "interchange": None, "doc_urls": None,
+            },
         ]
         cols = list(listings[0].keys()) + ["batch_id", "processed"]
         collist = ",".join(f"`{c}`" for c in cols)
@@ -674,7 +691,14 @@ def selftest() -> int:
         cur.execute("SELECT quantity FROM inventory WHERE part_id=%s", [pid])
         assert cur.fetchone()["quantity"] == 7, "inventory not loaded"
 
-        assert counts["listings_ok"] == 2, counts
+        # out-of-stock part keeps a NULL price (not a fake $0.00)
+        sku3 = sku_for("SELFTEST Brand", "SELFTEST-0003")
+        cur.execute("SELECT price FROM parts WHERE sku=%s", [sku3])
+        oos = cur.fetchone()
+        assert oos, "out-of-stock part not created"
+        assert oos["price"] is None, f"out-of-stock price must be NULL, got {oos['price']!r}"
+
+        assert counts["listings_ok"] == 3, counts
         assert counts["fitment_ok"] == 1, counts
 
         print(f"[selftest] loaded part id={pid}, vehicle id={veh['id']}, "

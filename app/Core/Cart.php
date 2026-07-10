@@ -74,6 +74,9 @@ class Cart
         $stmt->execute([$sku]);
         $part = $stmt->fetch();
         if (!$part) return false;
+        // NULL price = out of stock (RockAuto lists no price). Not purchasable, and
+        // cart_items.unit_price is NOT NULL — never let a priceless line into a cart.
+        if ($part['price'] === null) return false;
 
         $cartId = $this->id();
         $this->db->prepare(

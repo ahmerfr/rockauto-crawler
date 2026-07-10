@@ -102,7 +102,7 @@ CREATE TABLE parts (
   name              VARCHAR(255) NOT NULL,
   slug              VARCHAR(255) NOT NULL,
   description       TEXT NULL,
-  price             DECIMAL(10,2) NOT NULL DEFAULT 0,
+  price             DECIMAL(10,2) NULL DEFAULT NULL,   -- NULL = RockAuto shows no price (out of stock)
   core_charge       DECIMAL(10,2) NOT NULL DEFAULT 0,
   weight            DECIMAL(8,2) NULL,
   `status`          ENUM('active','inactive','discontinued') NOT NULL DEFAULT 'active',

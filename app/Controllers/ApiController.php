@@ -102,7 +102,26 @@ class ApiController extends Controller
         $this->json(array_map('intval', $stmt->fetchAll(\PDO::FETCH_COLUMN)));
     }
 
-    /** Level 5: part categories that have parts fitting a vehicle. */
+    /** Level 5: part GROUPS fitting a vehicle (RockAuto's "Brake & Wheel Hub" tier).
+     *  Parts hang off a leaf part-type whose parent is the group; a category with no
+     *  parent is its own group. */
+    public function treeGroups(): void
+    {
+        $stmt = $this->db()->prepare(
+            "SELECT g.name, g.slug, COUNT(DISTINCT p.id) AS n
+               FROM vehicles v
+               JOIN part_fitment pf ON pf.vehicle_id = v.id
+               JOIN parts p         ON p.id = pf.part_id
+               JOIN categories c    ON c.id = p.category_id
+               JOIN categories g    ON g.id = COALESCE(c.parent_id, c.id)
+              WHERE v.slug = ?
+              GROUP BY g.id ORDER BY g.name"
+        );
+        $stmt->execute([(string) ($_GET['vehicle'] ?? '')]);
+        $this->json($stmt->fetchAll());
+    }
+
+    /** Level 6: part-types inside one group, for a vehicle ("Brake Fluid"). */
     public function treeCategories(): void
     {
         $stmt = $this->db()->prepare(
@@ -110,15 +129,18 @@ class ApiController extends Controller
                FROM vehicles v
                JOIN part_fitment pf ON pf.vehicle_id = v.id
                JOIN parts p         ON p.id = pf.part_id
-               JOIN categories c     ON c.id = p.category_id
-              WHERE v.slug = ?
+               JOIN categories c    ON c.id = p.category_id
+               JOIN categories g    ON g.id = COALESCE(c.parent_id, c.id)
+              WHERE v.slug = :veh AND g.slug = :grp
               GROUP BY c.id ORDER BY c.name"
         );
-        $stmt->execute([(string) ($_GET['vehicle'] ?? '')]);
+        $stmt->execute([':veh' => (string) ($_GET['vehicle'] ?? ''),
+                        ':grp' => (string) ($_GET['group'] ?? '')]);
         $this->json($stmt->fetchAll());
     }
 
-    /** Level 6 (leaf): parts of a category fitting a vehicle. */
+    /** Level 7 (leaf): parts of a part-type fitting a vehicle.
+     *  Out-of-stock (price IS NULL) sorts last, as RockAuto does. */
     public function treeParts(): void
     {
         $stmt = $this->db()->prepare(
@@ -130,7 +152,7 @@ class ApiController extends Controller
           LEFT JOIN brands b        ON b.id = p.brand_id
               WHERE v.slug = :veh AND p.category_id =
                     (SELECT id FROM categories WHERE slug = :cat)
-              ORDER BY b.name, p.price"
+              ORDER BY (p.price IS NULL), b.name, p.price"
         );
         $stmt->execute([':veh' => (string) ($_GET['vehicle'] ?? ''),
                         ':cat' => (string) ($_GET['category'] ?? '')]);

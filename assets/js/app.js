@@ -1,5 +1,6 @@
 /* Supreme Parts — expandable catalog tree (RockAuto-style in-place drilldown).
-   Make -> Year -> Model -> Engine(vehicle) -> Category -> Parts, lazy-loaded. */
+   Make -> Year -> Model -> Engine(vehicle) -> Group -> Part Type -> Parts, lazy-loaded.
+   "Group" is RockAuto's category tier (e.g. Brake & Wheel Hub > Brake Fluid). */
 (function () {
   var tree = document.getElementById('catalogTree');
   if (!tree) return;
@@ -19,7 +20,8 @@
       case 'make':     return { kind: 'year',     url: '/years?make=' + enc(d.make) };
       case 'year':     return { kind: 'model',    url: '/models?make=' + enc(d.make) + '&year=' + enc(d.year) };
       case 'model':    return { kind: 'vehicle',  url: '/vehicles?make=' + enc(d.make) + '&year=' + enc(d.year) + '&model=' + enc(d.model) };
-      case 'vehicle':  return { kind: 'category', url: '/categories?vehicle=' + enc(d.vehicle) };
+      case 'vehicle':  return { kind: 'group',    url: '/groups?vehicle=' + enc(d.vehicle) };
+      case 'group':    return { kind: 'category', url: '/categories?vehicle=' + enc(d.vehicle) + '&group=' + enc(d.group) };
       case 'category': return { kind: 'parts',    url: '/parts?vehicle=' + enc(d.vehicle) + '&category=' + enc(d.category) };
     }
     return null;
@@ -28,7 +30,7 @@
   function buildNode(kind, item, parent) {
     var li = document.createElement('li');
     li.className = 'node node-' + kind;
-    ['make', 'year', 'model', 'vehicle', 'category'].forEach(function (k) {
+    ['make', 'year', 'model', 'vehicle', 'group', 'category'].forEach(function (k) {
       if (parent[k]) li.dataset[k] = parent[k];
     });
     var label, count = '', jump = '';
@@ -36,6 +38,7 @@
     else if (kind === 'model')  { li.dataset.level = 'model';    li.dataset.model = item.slug; label = item.name; }
     else if (kind === 'vehicle'){ li.dataset.level = 'vehicle';  li.dataset.vehicle = item.slug; label = item.label;
                                   jump = ' <a class="node-jump" href="' + VEH + '/' + enc(item.slug) + '">all parts &rarr;</a>'; }
+    else if (kind === 'group')  { li.dataset.level = 'group';    li.dataset.group = item.slug; label = item.name; count = item.n; }
     else if (kind === 'category'){ li.dataset.level = 'category'; li.dataset.category = item.slug; label = item.name; count = item.n; }
     li.innerHTML =
       '<div class="node-row">' +
@@ -49,14 +52,18 @@
   function renderParts(ul, parts) {
     if (!parts.length) { ul.innerHTML = '<li class="parts-empty">No parts in this category for this vehicle.</li>'; return; }
     var rows = parts.map(function (p) {
-      return '<tr>' +
+      // price IS NULL => RockAuto shows no price at all: out of stock, not buyable.
+      var oos = (p.price === null || p.price === undefined);
+      return '<tr' + (oos ? ' class="pm-row-oos"' : '') + '>' +
         '<td class="pm-brand">' + esc(p.brand || '') + '</td>' +
         '<td class="pm-name"><a href="' + PART + '/' + enc(p.sku) + '">' + esc(p.name) + '</a>' +
           '<span class="pm-pn">#' + esc(p.part_number) + (p.note ? ' &middot; ' + esc(p.note) : '') + '</span></td>' +
-        '<td class="pm-price">' + money(p.price) + '</td>' +
-        '<td class="pm-buy"><form method="post" action="' + CART + '">' +
-          '<input type="hidden" name="sku" value="' + esc(p.sku) + '">' +
-          '<button class="btn btn-primary btn-xs" type="submit">Add</button></form></td>' +
+        '<td class="pm-price">' + (oos ? '<span class="pm-oos">Out of Stock</span>' : money(p.price)) + '</td>' +
+        '<td class="pm-buy">' + (oos
+          ? '<span class="pm-notify">Notify Me</span>'
+          : '<form method="post" action="' + CART + '">' +
+            '<input type="hidden" name="sku" value="' + esc(p.sku) + '">' +
+            '<button class="btn btn-primary btn-xs" type="submit">Add</button></form>') + '</td>' +
       '</tr>';
     }).join('');
     ul.innerHTML = '<li class="parts-leaf"><table class="parts-mini"><tbody>' + rows + '</tbody></table></li>';

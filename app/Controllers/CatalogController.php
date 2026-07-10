@@ -75,7 +75,7 @@ class CatalogController extends Controller
                JOIN parts p  ON p.id = pf.part_id
           LEFT JOIN brands b ON b.id = p.brand_id
               WHERE pf.vehicle_id = :vid AND p.category_id = :cid
-              ORDER BY b.name, p.price"
+              ORDER BY (p.price IS NULL), b.name, p.price"
         );
         $stmt->execute([':vid' => $vehicle['id'], ':cid' => $category['id']]);
         $parts = $stmt->fetchAll();
