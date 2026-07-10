@@ -1,0 +1,109 @@
+name: RockAuto Brand Parallel
+
+# Crawl ONE make FULLY by splitting its tree across year windows — each matrix job
+# runs on a fresh Azure IP and crawls a disjoint SP_YEAR_MIN..SP_YEAR_MAX slice
+# (crawl.py drops out-of-window year nodes before fetching, so slices are truly
+# disjoint below the make page). Together the windows cover the whole make in
+# parallel. Per-window visited-cache makes any window that doesn't finish in one
+# 6h run resume next dispatch. Densest recent years get their own window.
+
+on:
+  workflow_dispatch:
+    inputs:
+      make:
+        description: "Make slug to crawl fully in parallel (e.g. acura)"
+        required: true
+        default: "acura"
+      budget:
+        description: "Max requests per window per run"
+        default: "8000"
+
+jobs:
+  window:
+    strategy:
+      fail-fast: false
+      max-parallel: 18
+      matrix:
+        include:
+          - { ymin: "1900", ymax: "2005" }
+          - { ymin: "2006", ymax: "2008" }
+          - { ymin: "2009", ymax: "2011" }
+          - { ymin: "2012", ymax: "2013" }
+          - { ymin: "2014", ymax: "2015" }
+          - { ymin: "2016", ymax: "2016" }
+          - { ymin: "2017", ymax: "2017" }
+          - { ymin: "2018", ymax: "2018" }
+          - { ymin: "2019", ymax: "2019" }
+          - { ymin: "2020", ymax: "2020" }
+          - { ymin: "2021", ymax: "2021" }
+          - { ymin: "2022", ymax: "2022" }
+          - { ymin: "2023", ymax: "2023" }
+          - { ymin: "2024", ymax: "2024" }
+          - { ymin: "2025", ymax: "2026" }
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install tesseract OCR + Python deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Restore visited cache (make + window)
+        uses: actions/cache/restore@v4
+        with:
+          path: coverage/visited.txt
+          key: rockauto-par-${{ github.event.inputs.make }}-${{ matrix.ymin }}-${{ matrix.ymax }}-${{ github.run_id }}
+          restore-keys: rockauto-par-${{ github.event.inputs.make }}-${{ matrix.ymin }}-${{ matrix.ymax }}-
+
+      - name: Crawl ${{ github.event.inputs.make }} ${{ matrix.ymin }}-${{ matrix.ymax }}
+        env:
+          SP_USE_PROXIES: "0"
+          SP_SOLVE_CAPTCHA: "1"
+          SP_MIN_DELAY: "1.2"
+          SP_MAX_DELAY: "2.8"
+          SP_YEAR_MIN: ${{ matrix.ymin }}
+          SP_YEAR_MAX: ${{ matrix.ymax }}
+          SP_MARKETS: ""
+          SP_DOWNLOAD_IMAGES: "1"
+          VISITED_FILE: "coverage/visited.txt"
+          VISITED_OUT: "artifacts/visited-${{ matrix.ymin }}-${{ matrix.ymax }}.txt"
+        run: |
+          python scraper/crawl_jsonl.py \
+            --makes "${{ github.event.inputs.make }}" \
+            --shard-total 1 \
+            --out "artifacts/shard-${{ matrix.ymin }}-${{ matrix.ymax }}.ndjson" \
+            --budget "${{ github.event.inputs.budget || '8000' }}" \
+            --max-seconds 19000
+
+      - name: Upload artifact (NDJSON + thumbnails + new-leaves list)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rockauto-par-${{ github.event.inputs.make }}-${{ matrix.ymin }}-${{ matrix.ymax }}
+          path: |
+            artifacts/shard-${{ matrix.ymin }}-${{ matrix.ymax }}.ndjson
+            artifacts/images/
+            artifacts/visited-${{ matrix.ymin }}-${{ matrix.ymax }}.txt
+          if-no-files-found: warn
+
+      - name: Merge new leaves into coverage
+        if: always()
+        run: |
+          mkdir -p coverage
+          touch coverage/visited.txt
+          cat artifacts/visited-${{ matrix.ymin }}-${{ matrix.ymax }}.txt >> coverage/visited.txt 2>/dev/null || true
+          sort -u coverage/visited.txt -o coverage/visited.txt
+          echo "leaves for ${{ github.event.inputs.make }} ${{ matrix.ymin }}-${{ matrix.ymax }} to date: $(wc -l < coverage/visited.txt)"
+
+      - name: Save visited cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: coverage/visited.txt
+          key: rockauto-par-${{ github.event.inputs.make }}-${{ matrix.ymin }}-${{ matrix.ymax }}-${{ github.run_id }}
