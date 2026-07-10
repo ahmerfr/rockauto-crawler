@@ -60,8 +60,14 @@ def main() -> int:
         return 1
 
     done = load_state()
+    # GitHub reports a CANCELLED run as status=completed. We cancel runs precisely
+    # because their data is unwanted (e.g. crawled with a since-fixed parser), so a
+    # cancelled run must never auto-load. Failures still load: with fail-fast:false
+    # one bad shard fails the run while the others uploaded real data.
     new = [r for r in runs
-           if r.get("status") == "completed" and str(r["databaseId"]) not in done]
+           if r.get("status") == "completed"
+           and r.get("conclusion") != "cancelled"
+           and str(r["databaseId"]) not in done]
     new.sort(key=lambda r: r.get("createdAt", ""))
     if not new:
         A.log("no new completed brand runs — up to date.")

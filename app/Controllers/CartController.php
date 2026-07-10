@@ -13,7 +13,8 @@ class CartController extends Controller
         $cart = new Cart();
         $sku = (string) ($_POST['sku'] ?? '');
         $qty = max(1, (int) ($_POST['qty'] ?? 1));
-        if ($sku !== '') { $cart->addBySku($sku, $qty); }
+        $variantId = max(0, (int) ($_POST['variant_id'] ?? 0));   // 0 = default price
+        if ($sku !== '') { $cart->addBySku($sku, $qty, $variantId); }
         // Return to where they were, or the cart.
         $back = $_POST['back'] ?? ($_SERVER['HTTP_REFERER'] ?? '');
         if ($back && str_contains($back, ($_SERVER['HTTP_HOST'] ?? ''))) {
@@ -36,14 +37,16 @@ class CartController extends Controller
     public function update(): void
     {
         $cart = new Cart();
-        $cart->setQty((int) ($_POST['part_id'] ?? 0), (int) ($_POST['qty'] ?? 0));
+        $cart->setQty((int) ($_POST['part_id'] ?? 0), (int) ($_POST['qty'] ?? 0),
+                      max(0, (int) ($_POST['variant_id'] ?? 0)));
         $this->redirect('/cart');
     }
 
     public function remove(): void
     {
         $cart = new Cart();
-        $cart->remove((int) ($_POST['part_id'] ?? 0));
+        $cart->remove((int) ($_POST['part_id'] ?? 0),
+                      max(0, (int) ($_POST['variant_id'] ?? 0)));
         $this->redirect('/cart');
     }
 }

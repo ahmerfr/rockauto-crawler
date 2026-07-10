@@ -18,16 +18,22 @@
         <div class="cart-line-main">
           <?php if (!empty($it['brand'])): ?><span class="part-brand"><?= e($it['brand']) ?></span><?php endif; ?>
           <a class="part-name" href="<?= e($_controller->url('/part/' . rawurlencode($it['sku']))) ?>"><?= e($it['name']) ?></a>
-          <div class="part-meta"><span class="pn">Part #<?= e($it['part_number']) ?></span></div>
+          <div class="part-meta"><span class="pn">Part #<?= e($it['part_number']) ?></span>
+            <?php if (!empty($it['variant_type'])): ?>
+              <span class="variant"><?= e($it['variant_type']) ?></span>
+            <?php endif; ?>
+          </div>
         </div>
         <form class="cart-qty" method="post" action="<?= e($_controller->url('/cart/update')) ?>">
           <input type="hidden" name="part_id" value="<?= (int)$it['part_id'] ?>">
+          <input type="hidden" name="variant_id" value="<?= (int)$it['variant_id'] ?>">
           <input type="number" name="qty" value="<?= (int)$it['quantity'] ?>" min="0" aria-label="Quantity">
           <button class="link" type="submit">Update</button>
         </form>
         <div class="cart-line-price"><?= money($it['line_total']) ?><span class="unit"><?= money($it['unit_price']) ?> ea</span></div>
         <form method="post" action="<?= e($_controller->url('/cart/remove')) ?>" class="cart-remove">
           <input type="hidden" name="part_id" value="<?= (int)$it['part_id'] ?>">
+          <input type="hidden" name="variant_id" value="<?= (int)$it['variant_id'] ?>">
           <button class="link danger" type="submit" title="Remove">&times;</button>
         </form>
       </div>

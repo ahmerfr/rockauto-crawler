@@ -149,6 +149,25 @@ CREATE TABLE part_attributes (
   CONSTRAINT fk_pattr_part FOREIGN KEY (part_id) REFERENCES parts(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
+-- RockAuto's per-listing option dropdown (optionchoice[N]): inventory tiers
+-- ("Regular Inventory" / "Wholesaler Closeout") and "Choose Type" packs.
+CREATE TABLE part_variants (
+  id           INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  part_id      INT UNSIGNED NOT NULL,
+  code         VARCHAR(64)  NOT NULL,             -- RockAuto option value, e.g. '0-0-1-1'
+  `type`       VARCHAR(160) NOT NULL,             -- label, e.g. 'Regular Inventory'
+  price        DECIMAL(10,2) NULL DEFAULT NULL,   -- NULL = no price (out of stock)
+  core_charge  DECIMAL(10,2) NOT NULL DEFAULT 0,
+  oos          TINYINT(1)   NOT NULL DEFAULT 0,
+  is_default   TINYINT(1)   NOT NULL DEFAULT 0,   -- RockAuto's `selected` option
+  pack_size    INT          NULL DEFAULT NULL,
+  pack_total   DECIMAL(10,2) NULL DEFAULT NULL,
+  position     INT          NOT NULL DEFAULT 0,
+  UNIQUE KEY uq_part_variant (part_id, code),
+  KEY idx_pv_part (part_id),
+  CONSTRAINT fk_pv_part FOREIGN KEY (part_id) REFERENCES parts(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
 CREATE TABLE inventory (
   id             INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   part_id        INT UNSIGNED NOT NULL,
@@ -211,9 +230,13 @@ CREATE TABLE cart_items (
   id         INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   cart_id    INT UNSIGNED NOT NULL,
   part_id    INT UNSIGNED NOT NULL,
+  -- which part_variants option was bought; 0 = the part's default price.
+  -- NOT NULL with a 0 sentinel so the UNIQUE key dedupes (MySQL treats NULLs
+  -- as distinct, which would let the same line be added twice).
+  variant_id INT UNSIGNED NOT NULL DEFAULT 0,
   quantity   INT NOT NULL DEFAULT 1,
   unit_price DECIMAL(10,2) NOT NULL,
-  UNIQUE KEY uq_cart_item (cart_id, part_id),
+  UNIQUE KEY uq_cart_item (cart_id, part_id, variant_id),
   CONSTRAINT fk_ci_cart FOREIGN KEY (cart_id) REFERENCES carts(id) ON DELETE CASCADE,
   CONSTRAINT fk_ci_part FOREIGN KEY (part_id) REFERENCES parts(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;

@@ -516,7 +516,7 @@ def _extract_variants(soup, idx: str) -> list[dict] | None:
             pack_total = float(pt.group(1).replace(",", "")) if pt else None
         ps = re.search(r"\{(\d+)\}", raw)
         pack_size = int(ps.group(1)) if ps else None
-        out.append({"type": _variant_type(opt), "price": price,
+        out.append({"code": val, "type": _variant_type(opt), "price": price,
                     "price_each": price_each, "pack_total": pack_total,
                     "pack_size": pack_size, "core": core, "oos": oos,
                     "selected": opt.has_attr("selected"), "raw": raw})
@@ -1029,9 +1029,11 @@ if __name__ == "__main__":
             close = next((v for v in iv if v["price"] == 1.28), None)
             reg = next((v for v in iv if v["price"] == 4.44), None)
             check(close is not None and close["selected"] is True
+                  and close["code"] == "0-0-1-1"
                   and "Wholesaler Closeout" in (close["type"] or ""),
                   f"closeout tier wrong: {close}")
             check(reg is not None and reg["selected"] is False
+                  and reg["code"] == "0-0-0-1"
                   and "Regular Inventory" in (reg["type"] or ""),
                   f"regular tier wrong: {reg}")
 

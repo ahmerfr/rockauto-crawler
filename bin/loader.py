@@ -346,33 +346,31 @@ class Loader:
 
         # 4b. "Choose Type" dropdown variants -> part_attributes rows the storefront
         # already renders. name="variant:<type>", value=per-each price (+ pack total).
-        # Dropdown options: inventory tiers ("Regular Inventory" / "Wholesaler
-        # Closeout") and "Choose Type" packs. `price` is authoritative (from
-        # RockAuto's pricebreakdown JSON); price_each is the per-each fallback.
-        for v in _jload(row.get("variants"), []):
+        # Dropdown options -> part_variants (inventory tiers like "Regular Inventory"
+        # / "Wholesaler Closeout", and "Choose Type" packs). `price` is authoritative
+        # (RockAuto's pricebreakdown JSON); price_each is the per-each fallback.
+        # price stays NULL for an option with no price (out of stock).
+        for i, v in enumerate(_jload(row.get("variants"), [])):
             if not isinstance(v, dict):
                 continue
             vtype = v.get("type")
+            code = v.get("code")
+            if not vtype or not code:
+                continue
             vp = _f(v.get("price"))
             if vp is None:
                 vp = _f(v.get("price_each"))
-            if not vtype or vp is None:
-                continue
-            bits = [f"{vp}"]
-            pt = _f(v.get("pack_total"))
-            if pt is not None and v.get("pack_size"):
-                bits.append(f"(pack of {int(v['pack_size'])} ${pt})")
-            elif pt is not None:
-                bits.append(f"(pack ${pt})")
-            if v.get("oos"):
-                bits.append("[out of stock]")
-            if v.get("selected"):
-                bits.append("[default]")
-            aname = _t(f"variant:{vtype}", 120)
-            aval = _t(" ".join(bits), 255)
-            self._insert_absent("part_attributes",
-                                {"part_id": pid, "name": aname, "value": aval},
-                                {"part_id": pid, "name": aname, "value": aval})
+            self._upsert_id(
+                "part_variants",
+                {"part_id": pid, "code": _t(str(code), 64), "type": _t(vtype, 160),
+                 "price": vp, "core_charge": _f(v.get("core")) or 0,
+                 "oos": 1 if v.get("oos") else 0,
+                 "is_default": 1 if v.get("selected") else 0,
+                 "pack_size": _i(v.get("pack_size")),
+                 "pack_total": _f(v.get("pack_total")), "position": i},
+                update_cols=["type", "price", "core_charge", "oos", "is_default",
+                             "pack_size", "pack_total", "position"],
+            )
 
         # 5. interchange (has uq part_id+number_norm -> plain upsert)
         for x in _jload(row.get("interchange"), []):
@@ -621,10 +619,14 @@ def selftest() -> int:
                 "image_urls": json.dumps(["https://example/selftest/img1.jpg"]),
                 "attributes": json.dumps([{"name": "Material", "value": "Ceramic"}]),
                 "variants": json.dumps([
-                    {"type": "Prediluted", "price_each": 6.15, "pack_total": None,
-                     "raw": "Prediluted ($6.15/Each)"},
-                    {"type": "Concentrated", "price_each": 6.09, "pack_total": 36.54,
-                     "raw": "Concentrated ($6.09/Each) $36.54"}]),
+                    {"code": "0-0-1-1", "type": "Wholesaler Closeout", "price": 6.15,
+                     "price_each": 6.15, "pack_total": None, "pack_size": None,
+                     "core": 0, "oos": False, "selected": True,
+                     "raw": "[Wholesaler Closeout] ($6.15)"},
+                    {"code": "0-0-0-1", "type": "Regular Inventory", "price": 6.09,
+                     "price_each": 6.09, "pack_total": 36.54, "pack_size": 6,
+                     "core": 0, "oos": True, "selected": False,
+                     "raw": "[Regular Inventory] ($6.09/Each) {6}+ $36.54"}]),
                 "warehouse_code": "MAIN", "quantity": 7, "fitment_note": "Front",
                 "warranty": "12 months",
                 "interchange": json.dumps([{"brand": "OtherCo", "number": "OC-99",
@@ -697,9 +699,17 @@ def selftest() -> int:
 
         cur.execute("SELECT COUNT(*) n FROM part_interchange WHERE part_id=%s", [pid])
         assert cur.fetchone()["n"] == 1, "interchange not loaded"
-        cur.execute("SELECT COUNT(*) n FROM part_attributes "
-                    "WHERE part_id=%s AND name LIKE 'variant:%%'", [pid])
-        assert cur.fetchone()["n"] == 2, "variant attributes not loaded"
+        cur.execute("SELECT code, `type`, price, oos, is_default, pack_size, pack_total "
+                    "FROM part_variants WHERE part_id=%s ORDER BY position", [pid])
+        pv = cur.fetchall()
+        assert len(pv) == 2, f"expected 2 part_variants, got {pv}"
+        d = pv[0]
+        assert d["code"] == "0-0-1-1" and d["is_default"] == 1 and d["oos"] == 0 \
+            and float(d["price"]) == 6.15, f"default variant wrong: {d}"
+        r = pv[1]
+        assert r["code"] == "0-0-0-1" and r["is_default"] == 0 and r["oos"] == 1 \
+            and r["pack_size"] == 6 and float(r["pack_total"]) == 36.54, \
+            f"pack/oos variant wrong: {r}"
         cur.execute("SELECT COUNT(*) n FROM part_images WHERE part_id=%s", [pid])
         assert cur.fetchone()["n"] == 1, "image not loaded"
         cur.execute("SELECT quantity FROM inventory WHERE part_id=%s", [pid])

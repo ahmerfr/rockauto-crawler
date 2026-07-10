@@ -34,17 +34,70 @@
     <?php endif; ?>
 
     <div class="pd-buybox">
-      <div class="pd-price"><?= money($part['price']) ?>
-        <?php if ((float)$part['core_charge'] > 0): ?><span class="core">+<?= money($part['core_charge']) ?> core</span><?php endif; ?>
+      <?php
+        // A variant's price wins over the part's headline price once chosen.
+        $default = null;
+        foreach ($variants as $v) { if ($v['is_default'] && !$v['oos']) { $default = $v; break; } }
+        if (!$default) { foreach ($variants as $v) { if (!$v['oos'] && $v['price'] !== null) { $default = $v; break; } } }
+        $shownPrice = $default ? $default['price'] : $part['price'];
+        $shownCore  = $default ? $default['core_charge'] : $part['core_charge'];
+        $buyable    = $shownPrice !== null;
+      ?>
+      <div class="pd-price" id="pdPrice" data-core="<?= e((string)$shownCore) ?>">
+        <?= money($shownPrice) ?>
+        <?php if ((float)$shownCore > 0): ?><span class="core">+<?= money($shownCore) ?> core</span><?php endif; ?>
       </div>
       <div class="pd-stock <?= $stock > 0 ? 'in' : 'out' ?>">
         <?= $stock > 0 ? 'In stock (' . (int)$stock . ')' : 'Backordered' ?>
       </div>
+
       <form method="post" action="<?= e($_controller->url('/cart/add')) ?>">
         <input type="hidden" name="sku" value="<?= e($part['sku']) ?>">
-        <button class="btn btn-primary" type="submit">Add to cart</button>
+        <?php if ($variants): ?>
+          <label class="pd-choose">Choose
+            <select name="variant_id" id="pdVariant">
+              <?php foreach ($variants as $v): ?>
+                <option value="<?= (int)$v['id'] ?>"
+                        data-price="<?= $v['price'] === null ? '' : e((string)$v['price']) ?>"
+                        data-core="<?= e((string)$v['core_charge']) ?>"
+                        <?= $v['oos'] ? 'disabled' : '' ?>
+                        <?= ($default && $v['id'] === $default['id']) ? 'selected' : '' ?>>
+                  <?= e($v['type']) ?>
+                  <?= $v['price'] === null ? '(Out of Stock)' : '(' . money($v['price']) . ')' ?>
+                  <?php if ($v['pack_size'] && $v['pack_total'] !== null): ?>
+                    — pack of <?= (int)$v['pack_size'] ?> <?= money($v['pack_total']) ?>
+                  <?php endif; ?>
+                  <?= $v['oos'] ? '— unavailable' : '' ?>
+                </option>
+              <?php endforeach; ?>
+            </select>
+          </label>
+        <?php endif; ?>
+        <?php if ($buyable): ?>
+          <button class="btn btn-primary" type="submit">Add to cart</button>
+        <?php else: ?>
+          <button class="btn" type="button" disabled>Out of Stock</button>
+        <?php endif; ?>
       </form>
     </div>
+
+    <?php if ($variants): ?>
+    <script>
+      // Switch the displayed price to the chosen option, like RockAuto does.
+      (function () {
+        var sel = document.getElementById('pdVariant'), box = document.getElementById('pdPrice');
+        if (!sel || !box) return;
+        sel.addEventListener('change', function () {
+          var o = sel.options[sel.selectedIndex];
+          var p = o.getAttribute('data-price'), c = parseFloat(o.getAttribute('data-core') || '0');
+          var html = (p === '' || p === null) ? 'Out of Stock'
+                   : '$' + Number(p).toFixed(2);
+          if (p !== '' && c > 0) html += ' <span class="core">+$' + c.toFixed(2) + ' core</span>';
+          box.innerHTML = html;
+        });
+      })();
+    </script>
+    <?php endif; ?>
 
     <?php if ($attrs): ?>
       <h3 class="pd-sub">Specifications</h3>

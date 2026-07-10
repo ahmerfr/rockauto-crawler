@@ -30,6 +30,16 @@ class PartController extends Controller
         $attrs->execute([$part['id']]);
         $attrs = $attrs->fetchAll();
 
+        // RockAuto's option dropdown (inventory tiers / "Choose Type" packs).
+        // Default option first, then cheapest; out-of-stock options last.
+        $variants = $db->prepare(
+            "SELECT id, code, `type`, price, core_charge, oos, is_default, pack_size, pack_total
+               FROM part_variants WHERE part_id = ?
+              ORDER BY oos ASC, is_default DESC, (price IS NULL), price ASC, position ASC"
+        );
+        $variants->execute([$part['id']]);
+        $variants = $variants->fetchAll();
+
         // Which vehicles this part fits (the fitment table — RockAuto's core view).
         $fit = $db->prepare(
             "SELECT v.slug, v.`year`, v.trim, m.name AS make, mo.name AS model,
@@ -50,7 +60,7 @@ class PartController extends Controller
         $stock->execute([$part['id']]);
         $stock = (int) ($stock->fetch()['qty'] ?? 0);
 
-        $this->render('part', compact('part', 'images', 'attrs', 'fitment', 'stock'),
+        $this->render('part', compact('part', 'images', 'attrs', 'fitment', 'stock', 'variants'),
             $part['name'] . ' — Supreme Parts');
     }
 }
