@@ -1,0 +1,31 @@
+name: RockAuto Block Probe
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - delay: "1.5"   # fast
+          - delay: "5.0"   # slow
+          - delay: "10.0"  # very slow
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: |
+          sudo apt-get update && sudo apt-get install -y tesseract-ocr
+          pip install -r requirements.txt
+      - name: Probe (delay ${{ matrix.delay }}s)
+        env:
+          SP_USE_PROXIES: "0"
+          SP_SOLVE_CAPTCHA: "1"
+          PROBE_DELAY: ${{ matrix.delay }}
+          PROBE_PAUSE: "900"
+        run: python scraper/block_probe.py
