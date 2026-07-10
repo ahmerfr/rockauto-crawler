@@ -39,8 +39,8 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: coverage/visited.txt
-          key: rockauto-brand-${{ github.event.inputs.make }}-${{ github.run_id }}
-          restore-keys: rockauto-brand-${{ github.event.inputs.make }}-
+          key: rockauto-brand-v2-${{ github.event.inputs.make }}-${{ github.run_id }}
+          restore-keys: rockauto-brand-v2-${{ github.event.inputs.make }}-
 
       - name: Crawl ${{ github.event.inputs.make }}
         env:
@@ -87,4 +87,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: coverage/visited.txt
-          key: rockauto-brand-${{ github.event.inputs.make }}-${{ github.run_id }}
+          key: rockauto-brand-v2-${{ github.event.inputs.make }}-${{ github.run_id }}

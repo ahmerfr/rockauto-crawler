@@ -58,8 +58,8 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: coverage/visited.txt
-          key: rockauto-par-${{ github.event.inputs.make }}-${{ matrix.ymin }}-${{ matrix.ymax }}-${{ github.run_id }}
-          restore-keys: rockauto-par-${{ github.event.inputs.make }}-${{ matrix.ymin }}-${{ matrix.ymax }}-
+          key: rockauto-par-v2-${{ github.event.inputs.make }}-${{ matrix.ymin }}-${{ matrix.ymax }}-${{ github.run_id }}
+          restore-keys: rockauto-par-v2-${{ github.event.inputs.make }}-${{ matrix.ymin }}-${{ matrix.ymax }}-
 
       - name: Crawl ${{ github.event.inputs.make }} ${{ matrix.ymin }}-${{ matrix.ymax }}
         env:
@@ -85,7 +85,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: rockauto-par-${{ github.event.inputs.make }}-${{ matrix.ymin }}-${{ matrix.ymax }}
+          name: rockauto-par-v2-${{ github.event.inputs.make }}-${{ matrix.ymin }}-${{ matrix.ymax }}
           path: |
             artifacts/shard-${{ matrix.ymin }}-${{ matrix.ymax }}.ndjson
             artifacts/images/
@@ -106,4 +106,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: coverage/visited.txt
-          key: rockauto-par-${{ github.event.inputs.make }}-${{ matrix.ymin }}-${{ matrix.ymax }}-${{ github.run_id }}
+          key: rockauto-par-v2-${{ github.event.inputs.make }}-${{ matrix.ymin }}-${{ matrix.ymax }}-${{ github.run_id }}
