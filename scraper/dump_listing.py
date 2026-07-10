@@ -65,6 +65,7 @@ def main() -> int:
     ap.add_argument("--group", default="Wiper & Washer")
     ap.add_argument("--parttype", default="Wiper Blade")
     ap.add_argument("--part", default="18160", help="only dump this part number (blank = all)")
+    ap.add_argument("--scan", default="", help="comma list of literals to hunt in the RAW page")
     args = ap.parse_args()
 
     client = RAClient(None)
@@ -99,6 +100,24 @@ def main() -> int:
     print(f"\n[leaf] {leaf_url}\n", flush=True)
     leaf_html = client.get(leaf_url)
     soup = BeautifulSoup(leaf_html, "lxml")
+
+    # --- RAW SCAN: is the JS-rendered data (inventory tiers, extra photos) even
+    # present in the server HTML, or fetched later by AJAX? -------------------
+    if args.scan:
+        print("#" * 78, flush=True)
+        print(f"[raw scan] page length = {len(leaf_html)} chars", flush=True)
+        for needle in [s for s in args.scan.split(",") if s]:
+            hits = [m.start() for m in re.finditer(re.escape(needle), leaf_html, re.I)]
+            print(f"\n=== {needle!r}: {len(hits)} hit(s) ===", flush=True)
+            for h in hits[:4]:
+                lo, hi = max(0, h - 220), min(len(leaf_html), h + 260)
+                print(f"  …{leaf_html[lo:hi]!r}…", flush=True)
+        # every RockAuto product photo referenced ANYWHERE on the page
+        photos = sorted(set(re.findall(r"[^\"'\s]*?/info/[^\"'\s]*?_ra_[a-z]\.jpg", leaf_html, re.I)))
+        print(f"\n=== all /info/ *_ra_*.jpg on page: {len(photos)} ===", flush=True)
+        for p in photos[:40]:
+            print(f"   {p}", flush=True)
+        print("#" * 78, flush=True)
 
     # Every listing row is keyed by an index N appearing in listingtd[N][...] ids.
     idxs = []

@@ -147,7 +147,13 @@ def process(client, node: dict, tree_only: bool = False) -> tuple[list[dict], li
         raise ValueError("node has neither href nor jsn")
 
     if ntype in C.LEAF_TYPES:
-        listings = parsers.parse_listings(html, C.listing_ctx(payload))
+        ctx = C.listing_ctx(payload)
+        # Record where each listing came from — listing_ctx carries no href, so every
+        # scraped part had source_url = NULL and was untraceable back to RockAuto.
+        if href and not ctx.get("source_url"):
+            ctx["source_url"] = (config.BASE.rstrip("/") + href
+                                 if href.startswith("/") else href)
+        listings = parsers.parse_listings(html, ctx)
         return listings, []
 
     children = parsers.parse_nav(html)
@@ -291,15 +297,19 @@ def run(shard_index: int, shard_total: int, out_path: str,
             stats["blocked"] = 0  # reset the consecutive-block counter on success
             stats["nodes"] += 1
             for lst in listings:
-                # Self-host the thumbnail: download it (unblocked here) and rewrite
-                # the URL to the local storefront path so it loads on the user's box.
+                # Self-host EVERY product photo (RockAuto shows a carousel of them):
+                # download each (unblocked here) and rewrite to local storefront paths
+                # so they load on the user's box. Taking only [0] threw the rest away.
+                # ponytail: downloads all photos per listing; if image bandwidth ever
+                # dominates the crawl, cap with a slice here.
                 if DOWNLOAD_IMAGES and lst.get("image_urls"):
-                    local = images.download(client._session, lst["image_urls"][0], img_root)
-                    if local:
-                        lst["image_urls"] = [local]
-                        stats["images"] += 1
-                    else:
-                        lst["image_urls"] = []
+                    locals_: list[str] = []
+                    for url in lst["image_urls"]:
+                        local = images.download(client._session, url, img_root)
+                        if local:
+                            locals_.append(local)
+                            stats["images"] += 1
+                    lst["image_urls"] = locals_
                 out.write(json.dumps(lst, ensure_ascii=False) + "\n")
                 stats["listings"] += 1
             for kid in kids:

@@ -13,6 +13,7 @@ on:
       group:    { description: "groupname",  default: "Wiper & Washer" }
       parttype: { description: "part type",  default: "Wiper Blade" }
       part:     { description: "part number to dump (blank = all rows)", default: "18160" }
+      scan:     { description: "comma list of literals to hunt in the raw page", default: "" }
 
 jobs:
   dump:
@@ -40,4 +41,5 @@ jobs:
             --model "${{ github.event.inputs.model }}" \
             --group "${{ github.event.inputs.group }}" \
             --parttype "${{ github.event.inputs.parttype }}" \
-            --part "${{ github.event.inputs.part }}"
+            --part "${{ github.event.inputs.part }}" \
+            --scan "${{ github.event.inputs.scan }}"
