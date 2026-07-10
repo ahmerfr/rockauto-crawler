@@ -145,16 +145,21 @@ def main() -> int:
         print("\n--- PRICE CELL RAW HTML ---", flush=True)
         print((str(pcell)[:1500] if pcell else "(none)"), flush=True)
 
-        if pcell is not None:
-            sel = pcell.find("select")
-            print("\n--- SELECT OPTIONS (selected flag decides headline price) ---", flush=True)
-            if sel is None:
-                print("(no <select>: single-price part)", flush=True)
-            else:
-                for opt in sel.find_all("option"):
-                    print(f"  selected={opt.has_attr('selected')!s:<5} "
-                          f"value={opt.get('value')!r:<14} text={opt.get_text(' ', strip=True)!r}",
-                          flush=True)
+        # The inventory-tier <select> is NOT in the price cell — it's optionchoice[N].
+        print("\n--- optionchoice[N] SELECT (selected flag = headline price) ---", flush=True)
+        sel = soup.find("select", id=f"optionchoice[{idx}]")
+        if sel is None:
+            print("(no optionchoice select: single-price part)", flush=True)
+        else:
+            for opt in sel.find_all("option"):
+                print(f"  selected={opt.has_attr('selected')!s:<5} "
+                      f"value={opt.get('value')!r:<12} text={opt.get_text(' ', strip=True)!r}",
+                      flush=True)
+
+        print("\n--- per-option price/core breakdown inputs ---", flush=True)
+        for inp in soup.find_all("input", id=re.compile(
+                rf"^(price|core)breakdown\[{re.escape(idx)}\]\[")):
+            print(f"  {inp.get('id')} = {inp.get('value')}", flush=True)
 
         # sibling spans that may hold the displayed headline price
         for extra in (f"dprice[{idx}]", f"dprice[{idx}][v]", f"dprice[{idx}][a]"):
