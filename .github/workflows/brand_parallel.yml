@@ -39,7 +39,7 @@ jobs:
           - { ymin: "2022", ymax: "2022" }
           - { ymin: "2023", ymax: "2023" }
           - { ymin: "2024", ymax: "2024" }
-          - { ymin: "2025", ymax: "2026" }
+          - { ymin: "2025", ymax: "2035" }
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:
