@@ -407,14 +407,28 @@ def _extract_price_by_index(soup, idx: str) -> tuple[float | None, float | None]
     OUTSIDE the text container: listingtd[N][price] (a single $ OR a 'Choose Type'
     variant <select>), core in listingtd[N][core].
 
-    ponytail: take the CHEAPEST $-token in the price cell (the storefront's
-    'from $X.XX'). One rule covers single-price, multi-variant dropdowns (empty
-    dprice span → $0 was the bug), and out-of-stock (no $ → None) — no need to
-    parse the dropdown's exact markup."""
+    Resolution order (verified against RockAuto's live markup):
+      1. the `selected` option of optionchoice[N] — that IS the headline price;
+      2. `dprice[N][v]`, the span RockAuto renders;
+      3. cheapest $-token in the price cell.
+    Out-of-stock parts show no $ anywhere -> None (never 0.00)."""
     price = core = None
     ce = soup.find(id=f"dprice[{idx}][core]") or soup.find(id=f"listingtd[{idx}][core]")
     if ce is not None:
         core = _money(ce.get_text(" ", strip=True))
+
+    variants = _extract_variants(soup, idx)
+    if variants:
+        price, vcore = _price_from_variants(variants)
+        if price is not None:
+            return price, (core if core is not None else vcore)
+
+    dv = soup.find(id=f"dprice[{idx}][v]")
+    if dv is not None:
+        price = _num(dv.get_text(" ", strip=True))
+        if price is not None:
+            return price, core
+
     pcell = soup.find(id=f"listingtd[{idx}][price]") or soup.find(id=f"dprice[{idx}][td]")
     if pcell is not None:
         amts = [float(m.group(1).replace(",", ""))
@@ -425,34 +439,101 @@ def _extract_price_by_index(soup, idx: str) -> tuple[float | None, float | None]
     return price, core
 
 
-def _extract_variants(soup, idx: str) -> list[dict] | None:
-    """Parse a "Choose Type" dropdown in listingtd[N][price] into per-variant dicts.
-
-    Each <option> looks like "Prediluted ($6.15/Each)" or, for a pack,
-    "Prediluted ($6.09/Each) $36.54". Returns
-    [{type, price_each, pack_total, raw}] or None when there's no such select
-    (single-price / out-of-stock parts). Options without a "$X/Each" token
-    (e.g. the "Choose Type" placeholder) are skipped."""
-    pcell = soup.find(id=f"listingtd[{idx}][price]") or soup.find(id=f"dprice[{idx}][td]")
-    if pcell is None:
+def _num(v) -> float | None:
+    """First money-shaped number in a value ('$1.28', '1.28', or an HTML span)."""
+    if v is None:
         return None
-    sel = pcell.find("select")
+    m = re.search(r"([0-9][0-9,]*\.\d{2})", str(v))
+    return float(m.group(1).replace(",", "")) if m else None
+
+
+def _variant_type(opt) -> str | None:
+    """Option label without prices/pack markers.
+
+    "Choose Type" options carry a clean <span class="param-value-text">Prediluted</span>;
+    inventory-tier options don't, so strip '($1.28)', '{6}+', '^' and brackets from
+    '[ Wholesaler Closeout -- 30 Day Warranty] ($1.28) ^'.
+    """
+    pv = opt.find("span", class_="param-value-text")
+    if pv is not None:
+        t = re.sub(r"\s+", " ", _text(pv)).strip()
+        if t:
+            return t
+    t = re.sub(r"\(\s*\$\s*[0-9][0-9,]*\.\d{2}[^)]*\)", "", _text(opt))  # ($1.28) / ($6.15/Each)
+    t = re.sub(r"\{\d+\}\+?", "", t)                                     # {6}+ pack marker
+    t = _PRICE_RE.sub("", t)                                             # any leftover $ amount
+    t = t.replace("^", "").strip().strip("[]").strip()
+    return re.sub(r"\s+", " ", t) or None
+
+
+def _extract_variants(soup, idx: str) -> list[dict] | None:
+    """Parse a listing's option dropdown into per-variant dicts.
+
+    RockAuto keys the <select> as `optionchoice[N]` — NOT inside the price cell —
+    and stores each option's authoritative price/core/stock in hidden inputs
+    `pricebreakdown[N][<optvalue>]` / `corebreakdown[N][<optvalue>]` as JSON.
+    Covers BOTH dropdown flavours:
+      * inventory tiers  -> "[Wholesaler Closeout -- 30 Day Warranty] ($1.28)"
+      * "Choose Type"    -> "Prediluted ($6.15/Each) $36.54"
+    The option carrying `selected` is what RockAuto shows as the headline price.
+
+    Returns [{type, price, price_each, pack_total, core, oos, selected, raw}] or
+    None when the listing has no dropdown (plain single-price part).
+    """
+    sel = soup.find("select", id=f"optionchoice[{idx}]")
     if sel is None:
         return None
     out: list[dict] = []
     for opt in sel.find_all("option"):
+        val = (opt.get("value") or "").strip()
+        if not val:
+            continue                       # the "Choose at Left" placeholder
         raw = _text(opt)
+        price = core = None
+        oos = False
+        pb = soup.find("input", id=f"pricebreakdown[{idx}][{val}]")
+        if pb is not None:
+            try:
+                d = json.loads(pb.get("value") or "{}")
+                oos = bool(d.get("oos"))
+                price = _num(d.get("n"))
+            except ValueError:
+                pass
+        cb = soup.find("input", id=f"corebreakdown[{idx}][{val}]")
+        if cb is not None:
+            try:
+                core = _num(json.loads(cb.get("value") or "{}").get("n"))
+            except ValueError:
+                pass
+        if price is None:                  # no breakdown input -> read the label
+            price = _num(raw)
+        # "Choose Type" packs: per-each price, pack size "{6}+", pack total after "/Each".
         m = _EACH_RE.search(raw)
-        if not m:
-            continue  # placeholder / non-priced option
-        price_each = float(m.group(1).replace(",", ""))
-        type_name = raw.split("(", 1)[0].strip() or None
-        # A pack total is a second $-amount AFTER the "/Each" token.
-        pt = _PRICE_RE.search(raw[m.end():])
-        pack_total = float(pt.group(1).replace(",", "")) if pt else None
-        out.append({"type": type_name, "price_each": price_each,
-                    "pack_total": pack_total, "raw": raw})
+        price_each = float(m.group(1).replace(",", "")) if m else price
+        pack_total = None
+        if m:
+            pt = _PRICE_RE.search(raw[m.end():])
+            pack_total = float(pt.group(1).replace(",", "")) if pt else None
+        ps = re.search(r"\{(\d+)\}", raw)
+        pack_size = int(ps.group(1)) if ps else None
+        out.append({"type": _variant_type(opt), "price": price,
+                    "price_each": price_each, "pack_total": pack_total,
+                    "pack_size": pack_size, "core": core, "oos": oos,
+                    "selected": opt.has_attr("selected"), "raw": raw})
     return out or None
+
+
+def _price_from_variants(variants: list[dict]) -> tuple[float | None, float | None]:
+    """Headline price = the `selected` option (what RockAuto renders). Falls back
+    to the cheapest in-stock option when nothing is preselected."""
+    sel = next((v for v in variants if v.get("selected") and v.get("price") is not None), None)
+    if sel:
+        return sel["price"], sel.get("core")
+    live = [v for v in variants if v.get("price") is not None and not v.get("oos")]
+    if live:
+        best = min(live, key=lambda v: v["price"])
+        return best["price"], best.get("core")
+    return None, None
 
 
 def _extract_attributes_and_desc(cont, name_el) -> tuple[list[dict], str | None]:
@@ -674,11 +755,14 @@ def parse_listings(html: str, ctx: dict) -> list[dict]:
                 if core_charge is None:
                     core_charge = c2
 
-            # "Choose Type" dropdown parts: capture EVERY variant; the scalar
-            # price stays the cheapest per-each (storefront 'from' price).
+            # Dropdown parts (inventory tiers or "Choose Type"): capture EVERY
+            # option. The scalar price is the SELECTED one — RockAuto's headline —
+            # already resolved by _extract_price_by_index; only fill a gap here.
             variants = _extract_variants(soup, idx) if idx else None
-            if variants:
-                price = min(v["price_each"] for v in variants)
+            if variants and price is None:
+                price, vcore = _price_from_variants(variants)
+                if core_charge is None:
+                    core_charge = vcore
 
             # Product photo (index-keyed structure), else container-scoped images.
             image_urls = _extract_product_images(soup, idx) if idx else []
@@ -859,14 +943,19 @@ if __name__ == "__main__":
             <a class="span-link-out-desc" href="/z">Green Antifreeze/Coolant</a>
           </td>
           <td id="listingtd[3][price]">
-            <span id="dprice[3][td]"></span>Choose Type at Left
-            <select>
-              <option value="">Choose Type</option>
-              <option>Prediluted ($8.79/Each)</option>
-              <option>Concentrated ($6.15/Each)</option>
-              <option>Concentrated ($6.09/Each) $36.54</option>
-            </select>
+            <span id="dprice[3][td]"><span id="dprice[3][v]"></span></span>Choose Type at Left
           </td>
+          <!-- REAL markup: the select is optionchoice[N], outside the price cell,
+               with authoritative per-option prices in pricebreakdown[N][value]. -->
+          <select id="optionchoice[3]" name="optionchoice[3]">
+            <option value="" selected>&nbsp;</option>
+            <option value="22-50-0-1"><span class="param-value-text">Prediluted</span> <b>($8.79/Each)</b> {1}+ $8.79 ^</option>
+            <option value="22-CON-0-1"><span class="param-value-text">Concentrated</span> <b>($6.15/Each)</b> {1}+ $6.15 ^</option>
+            <option value="22-50-0-6"><span class="param-value-text">Concentrated</span> <b>($6.09/Each)</b> {6}+ $36.54 ^</option>
+          </select>
+          <input type="hidden" id="pricebreakdown[3][22-50-0-1]" value='{"oos":false,"v":"($8.79/Each)","n":"8.79"}'>
+          <input type="hidden" id="pricebreakdown[3][22-CON-0-1]" value='{"oos":false,"v":"($6.15/Each)","n":"6.15"}'>
+          <input type="hidden" id="pricebreakdown[3][22-50-0-6]" value='{"oos":false,"v":"($6.09/Each)","n":"6.09"}'>
         </tr>
       </tbody>
       <tbody class="listing-container-border">
@@ -891,7 +980,8 @@ if __name__ == "__main__":
     fvp = next((p for p in parts if p["part_number"] == "GREEN5050GAL"), None)
     check(fvp is not None, "variant part GREEN5050GAL missing")
     if fvp:
-        # scalar price = cheapest per-each across all variants (the 'from' price)
+        # "Choose Type": only the PLACEHOLDER is selected, so no headline price ->
+        # fall back to the cheapest in-stock option (the storefront's 'from' price).
         check(fvp["price"] == 6.09,
               f"variant scalar price should be cheapest 6.09, got {fvp['price']}")
         vs = fvp["variants"]
@@ -899,13 +989,51 @@ if __name__ == "__main__":
               f"expected 3 parsed variants (placeholder skipped), got {vs}")
         if isinstance(vs, list) and len(vs) == 3:
             pred = next((v for v in vs if v["type"] == "Prediluted"), None)
-            pack = next((v for v in vs if v["pack_total"] is not None), None)
-            check(pred is not None and pred["price_each"] == 8.79
-                  and pred["pack_total"] is None,
+            pack = next((v for v in vs if v["pack_size"] == 6), None)
+            check(pred is not None and pred["price_each"] == 8.79,
                   f"Prediluted variant wrong: {pred}")
             check(pack is not None and pack["type"] == "Concentrated"
                   and pack["price_each"] == 6.09 and pack["pack_total"] == 36.54,
                   f"pack variant wrong: {pack}")
+            check(all(not v["selected"] for v in vs),
+                  "no real option should be selected for a Choose Type part")
+
+    # --- inventory tiers (TRICO 18160): real markup, one option IS selected ------
+    INV_HTML = """
+    <table><tbody class="listing-container-border" id="listingcontainer[8]"><tr>
+      <td>
+        <span class="listing-final-manufacturer">TRICO</span>
+        <span class="listing-final-partnumber">18160</span>
+        <a class="span-link-out-desc" href="/z">Flex; Beam</a>
+      </td>
+      <td id="listingtd[8][price]"><span id="dprice[8][td]"><span id="dprice[8][v]">$1.28</span></span></td>
+      <select id="optionchoice[8]" name="optionchoice[8]">
+        <option value="">&nbsp;</option>
+        <option value="0-0-1-1" selected> [<a href="/x">Wholesaler Closeout</a> -- 30 Day Warranty] <b>($1.28)</b> ^</option>
+        <option value="0-0-0-1"> [<a href="/y">Regular Inventory</a>] <b>($4.44)</b> ^</option>
+      </select>
+      <input type="hidden" id="pricebreakdown[8][0-0-1-1]" value='{"oos":false,"v":"$1.28","n":"1.28"}'>
+      <input type="hidden" id="pricebreakdown[8][0-0-0-1]" value='{"oos":false,"v":"$4.44","n":"4.44"}'>
+    </tr></tbody></table>
+    """
+    inv = parse_listings(INV_HTML, CTX)
+    check(len(inv) == 1, f"inventory-tier: expected 1 part, got {len(inv)}")
+    if inv:
+        t = inv[0]
+        # RockAuto's headline is the SELECTED option ($1.28), not min, not $4.44.
+        check(t["price"] == 1.28, f"headline price must be selected option 1.28, got {t['price']}")
+        iv = t["variants"]
+        check(isinstance(iv, list) and len(iv) == 2,
+              f"expected 2 inventory tiers, got {iv}")
+        if isinstance(iv, list) and len(iv) == 2:
+            close = next((v for v in iv if v["price"] == 1.28), None)
+            reg = next((v for v in iv if v["price"] == 4.44), None)
+            check(close is not None and close["selected"] is True
+                  and "Wholesaler Closeout" in (close["type"] or ""),
+                  f"closeout tier wrong: {close}")
+            check(reg is not None and reg["selected"] is False
+                  and "Regular Inventory" in (reg["type"] or ""),
+                  f"regular tier wrong: {reg}")
 
     EXPECTED_LISTING_KEYS = {
         "source", "source_url", "make_name", "model_name", "year",

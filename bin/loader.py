@@ -346,16 +346,30 @@ class Loader:
 
         # 4b. "Choose Type" dropdown variants -> part_attributes rows the storefront
         # already renders. name="variant:<type>", value=per-each price (+ pack total).
+        # Dropdown options: inventory tiers ("Regular Inventory" / "Wholesaler
+        # Closeout") and "Choose Type" packs. `price` is authoritative (from
+        # RockAuto's pricebreakdown JSON); price_each is the per-each fallback.
         for v in _jload(row.get("variants"), []):
             if not isinstance(v, dict):
                 continue
             vtype = v.get("type")
-            pe = _f(v.get("price_each"))
-            if not vtype or pe is None:
+            vp = _f(v.get("price"))
+            if vp is None:
+                vp = _f(v.get("price_each"))
+            if not vtype or vp is None:
                 continue
+            bits = [f"{vp}"]
             pt = _f(v.get("pack_total"))
+            if pt is not None and v.get("pack_size"):
+                bits.append(f"(pack of {int(v['pack_size'])} ${pt})")
+            elif pt is not None:
+                bits.append(f"(pack ${pt})")
+            if v.get("oos"):
+                bits.append("[out of stock]")
+            if v.get("selected"):
+                bits.append("[default]")
             aname = _t(f"variant:{vtype}", 120)
-            aval = _t(str(pe) if pt is None else f"{pe} (pack ${pt})", 255)
+            aval = _t(" ".join(bits), 255)
             self._insert_absent("part_attributes",
                                 {"part_id": pid, "name": aname, "value": aval},
                                 {"part_id": pid, "name": aname, "value": aval})
