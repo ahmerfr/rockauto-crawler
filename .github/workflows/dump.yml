@@ -1,0 +1,43 @@
+name: RockAuto Dump Listing
+
+# Print the RAW markup of one leaf page (price cell, <select> options + which is
+# `selected`, and every image URL) so the parser can be fixed against ground truth.
+# Runs on a GitHub runner because our dev IP is blocked by RockAuto.
+
+on:
+  workflow_dispatch:
+    inputs:
+      make:     { description: "make slug",  default: "ac" }
+      year:     { description: "year",       default: "1962" }
+      model:    { description: "model slug", default: "ace" }
+      group:    { description: "groupname",  default: "Wiper & Washer" }
+      parttype: { description: "part type",  default: "Wiper Blade" }
+      part:     { description: "part number to dump (blank = all rows)", default: "18160" }
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: |
+          sudo apt-get update && sudo apt-get install -y tesseract-ocr
+          pip install -r requirements.txt
+      - name: Dump listing markup
+        env:
+          SP_USE_PROXIES: "0"
+          SP_SOLVE_CAPTCHA: "1"
+          SP_YEAR_MIN: "1900"
+          SP_YEAR_MAX: "2035"
+          SP_MARKETS: ""
+        run: |
+          python scraper/dump_listing.py \
+            --make "${{ github.event.inputs.make }}" \
+            --year "${{ github.event.inputs.year }}" \
+            --model "${{ github.event.inputs.model }}" \
+            --group "${{ github.event.inputs.group }}" \
+            --parttype "${{ github.event.inputs.parttype }}" \
+            --part "${{ github.event.inputs.part }}"
