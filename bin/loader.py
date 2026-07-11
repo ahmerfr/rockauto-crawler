@@ -351,12 +351,13 @@ class Loader:
         # (RockAuto's pricebreakdown JSON); price_each is the per-each fallback.
         # price stays NULL for an option with no price (out of stock).
         for i, v in enumerate(_jload(row.get("variants"), [])):
-            if not isinstance(v, dict):
+            if not isinstance(v, dict) or not v.get("raw"):
                 continue
-            vtype = v.get("type")
-            code = v.get("code")
-            if not vtype or not code:
-                continue
+            # Backward/robustness: crawls before the `code` field, and options
+            # RockAuto lists with only a price (no label), still load. Fall back
+            # to a position-stable code and a generic label.
+            code = v.get("code") or f"opt{i}"
+            vtype = v.get("type") or f"Option {i + 1}"
             vp = _f(v.get("price"))
             if vp is None:
                 vp = _f(v.get("price_each"))
@@ -507,9 +508,13 @@ class Loader:
         return counts
 
     def _mark_processed(self, table: str, raw_ids: list[int]) -> None:
-        marks = ",".join(["%s"] * len(raw_ids))
-        self.cur.execute(f"UPDATE `{table}` SET processed=1 WHERE raw_id IN ({marks})",
-                         raw_ids)
+        # Chunk the IN() list: a single UPDATE with ~200k placeholders exceeds
+        # MySQL's max_allowed_packet and fails the whole batch.
+        for i in range(0, len(raw_ids), 1000):
+            chunk = raw_ids[i:i + 1000]
+            marks = ",".join(["%s"] * len(chunk))
+            self.cur.execute(
+                f"UPDATE `{table}` SET processed=1 WHERE raw_id IN ({marks})", chunk)
 
 
 # ---------------------------------------------------------------------------
