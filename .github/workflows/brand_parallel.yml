@@ -23,23 +23,21 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 18
+      # Gap-fill: dense makes cap a 3-year window before finishing it, so target
+      # ONLY the years still missing, in 1-2 year windows small enough to fully
+      # crawl in one run. (Acura had 1986-1991, 2006-07, 2009-10, 2012-2026; the
+      # ranges below fill 1992-2005, 2008, 2011. Fresh cache keys = clean crawl.)
       matrix:
         include:
-          - { ymin: "1900", ymax: "2005" }
-          - { ymin: "2006", ymax: "2008" }
-          - { ymin: "2009", ymax: "2011" }
-          - { ymin: "2012", ymax: "2013" }
-          - { ymin: "2014", ymax: "2015" }
-          - { ymin: "2016", ymax: "2016" }
-          - { ymin: "2017", ymax: "2017" }
-          - { ymin: "2018", ymax: "2018" }
-          - { ymin: "2019", ymax: "2019" }
-          - { ymin: "2020", ymax: "2020" }
-          - { ymin: "2021", ymax: "2021" }
-          - { ymin: "2022", ymax: "2022" }
-          - { ymin: "2023", ymax: "2023" }
-          - { ymin: "2024", ymax: "2024" }
-          - { ymin: "2025", ymax: "2035" }
+          - { ymin: "1992", ymax: "1993" }
+          - { ymin: "1994", ymax: "1995" }
+          - { ymin: "1996", ymax: "1997" }
+          - { ymin: "1998", ymax: "1999" }
+          - { ymin: "2000", ymax: "2001" }
+          - { ymin: "2002", ymax: "2003" }
+          - { ymin: "2004", ymax: "2005" }
+          - { ymin: "2008", ymax: "2008" }
+          - { ymin: "2011", ymax: "2011" }
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:
