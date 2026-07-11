@@ -145,16 +145,64 @@ def copy_artifact_images(dest: str) -> int:
     return n
 
 
+def _run_artifact_names(run_id: str) -> list[str] | None:
+    """Names of every artifact GitHub has for this run (None on API failure)."""
+    out = subprocess.run(
+        [GH, "api", f"repos/{REPO}/actions/runs/{run_id}/artifacts",
+         "--paginate", "--jq", ".artifacts[].name"],
+        capture_output=True, text=True, cwd=ROOT)
+    if out.returncode != 0:
+        return None
+    return [n.strip() for n in (out.stdout or "").splitlines() if n.strip()]
+
+
+def _shard_in(path: str) -> bool:
+    return bool(glob.glob(os.path.join(path, "**", "shard-*.ndjson"), recursive=True))
+
+
 def process_run(run_id: str) -> bool:
-    """Download + ingest + load one fleet run. True on success."""
+    """Download + ingest + load one fleet run. True on success.
+
+    Downloads EACH artifact into its own subfolder. `gh run download` extracts
+    every artifact into one directory, and the windows share image paths (the
+    same part photo recurs across year windows), so a duplicate path makes gh
+    error 'file exists' and abort the WHOLE download after a few artifacts — which
+    silently dropped 12 of 15 shards. Per-artifact folders remove the collision.
+    Returns False (run not recorded, retries next cycle) if any artifact is missing."""
     dest = os.path.join(DL_DIR, run_id)
     os.makedirs(dest, exist_ok=True)
-    dl = subprocess.run([GH, "run", "download", run_id, "-D", dest],
-                        capture_output=True, text=True, cwd=ROOT)
-    # A run with no artifacts (all shards empty) is a success with nothing to do.
+
+    names = _run_artifact_names(run_id)
+    if names is None:
+        log(f"run {run_id}: could not list artifacts — will retry next cycle")
+        return False
+    if not names:
+        log(f"run {run_id}: no artifacts — nothing to load")
+        return True
+
+    missing = []
+    for name in names:
+        sub = os.path.join(dest, name)
+        if _shard_in(sub):
+            continue                       # already have it (resumable)
+        os.makedirs(sub, exist_ok=True)
+        ok = False
+        for attempt in range(3):
+            r = subprocess.run([GH, "run", "download", run_id, "-n", name, "-D", sub],
+                               capture_output=True, text=True, cwd=ROOT)
+            if r.returncode == 0 and _shard_in(sub):
+                ok = True
+                break
+        if not ok:
+            missing.append(name)
+    if missing:
+        log(f"run {run_id}: {len(missing)}/{len(names)} artifact(s) failed to download "
+            f"({missing[:3]}) — will retry next cycle")
+        return False
+
     files = glob.glob(os.path.join(dest, "**", "shard-*.ndjson"), recursive=True)
     if not files:
-        log(f"run {run_id}: no NDJSON artifacts ({dl.stderr.strip()[:80]}) — nothing to load")
+        log(f"run {run_id}: {len(names)} artifact(s) but no shard NDJSON — nothing to load")
         return True
     total_lines = sum(sum(1 for _ in open(f, encoding="utf-8")) for f in files)
     log(f"run {run_id}: {len(files)} shard file(s), {total_lines} listing lines")
