@@ -699,12 +699,16 @@ def _style_by_index(html: str) -> dict:
     out: dict = {}
     cur = None
     for m in re.finditer(
-        r'listing-sortgroupheader[^>]*>\s*([^<&]+)'   # 1: section label
+        r'listing-sortgroupheader[^>]*>\s*([^<]+)'    # 1: section label (until next tag)
         r'|listing(?:container|td)\[(\d+)\]',          # 2: a listing row index
         html or "",
     ):
         if m.group(1) is not None:
-            cur = m.group(1).strip() or cur
+            # Capture the whole label and unescape entities — labels like
+            # "Particulate (Filters Dust, Pollen &amp; Odor)" carry `&`, and the
+            # trailing &nbsp; unescapes to a strippable no-break space.
+            label = _htmllib.unescape(m.group(1)).strip()
+            cur = label or cur
         elif cur is not None and m.group(2) is not None:
             out.setdefault(m.group(2), cur)
     return out
@@ -1150,7 +1154,7 @@ if __name__ == "__main__":
         <td id="listingtd[11][price]"><span id="dprice[11][v]">$3.55</span></td>
       </tr>
       <tr><td colspan="7">
-        <div class="listing-sortgroupheader mouseover" title="Cold">Winter&nbsp;</div>
+        <div class="listing-sortgroupheader mouseover" title="Cold">Winter &amp; Ice&nbsp;</div>
       </td></tr>
       <tr class="listing-container-border" id="listingcontainer[12]">
         <td><span class="listing-final-manufacturer">TRICO</span>
@@ -1171,8 +1175,8 @@ if __name__ == "__main__":
           f"18170 Style should be 'Beam (Standard)', got {beam and _style(beam)}")
     check(impr is not None and _style(impr) == "Improved Frame Style",
           f"9717 Style should be 'Improved Frame Style', got {impr and _style(impr)}")
-    check(wint is not None and _style(wint) == "Winter",
-          f"35170 Style should be 'Winter', got {wint and _style(wint)}")
+    check(wint is not None and _style(wint) == "Winter & Ice",
+          f"35170 Style should be 'Winter & Ice' (entity unescaped), got {wint and _style(wint)}")
 
     # ---- CAPTCHA detection ----
     check(is_captcha("", "https://www.rockauto.com/captcha/?redirecturl=x") is True,
