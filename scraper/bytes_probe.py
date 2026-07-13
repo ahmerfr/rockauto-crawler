@@ -43,20 +43,15 @@ def kids(client, node, want=None):
 
 
 def leaf_wire(client, ptnode):
-    """POST one part-type leaf and return (gzipped_wire_bytes, decompressed, req_out, n_listings)."""
-    jsn = dict(ptnode.get("jsn") or {})
-    jsn["max_group_index"] = 363
-    body = {"func": "tab_fetch", "payload": json.dumps(jsn, separators=(",", ":")),
-            "api_json_request": "1", "sctchecked": "1", "scbeenloaded": "false", "curCartGroupID": ""}
-    if client._nck:
-        body["_nck"] = client._nck
-    resp = client._send("POST", config.CATALOG_API, data=body, headers=client._api_headers())
-    decomp = len(resp.content or b"")
-    wire = int(resp.headers.get("Content-Length") or 0)
-    if not wire:                       # chunked/no header -> estimate gzip of the body
-        wire = len(gzip.compress(resp.content or b""))
-    req_out = len(json.dumps(body))
-    listings = parsers.parse_listings(resp.text, {"markets": ["US"]})
+    """Fetch one part-type leaf via the WORKING fetch_children path; measure the
+    gzipped fragment (~= billed response wire) + the request-out body."""
+    frag = client.fetch_children(ptnode, max_group_index=363) or ""
+    raw = frag.encode("utf-8", "ignore")
+    decomp = len(raw)
+    wire = len(gzip.compress(raw)) if raw else 0          # gzipped response ~= billed down-bytes
+    jsn = dict(ptnode.get("jsn") or {}); jsn["max_group_index"] = 363
+    req_out = len(json.dumps(jsn)) + len(client._nck or "") + 120   # POST body up-bytes
+    listings = parsers.parse_listings(frag, {"markets": ["US"]})
     return wire, decomp, req_out, len(listings)
 
 
