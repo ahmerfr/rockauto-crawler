@@ -232,20 +232,25 @@ def run(shard_index: int, shard_total: int, out_path: str,
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
 
+    exit_reason = "drained"   # stays 'drained' iff the frontier empties naturally
     with open(out_path, "w", encoding="utf-8") as out:
         while frontier:
             if stats["requests"] >= budget:
+                exit_reason = "budget"
                 print(f"[stop] request budget {budget} reached", flush=True)
                 break
             if time.monotonic() - started > max_seconds:
+                exit_reason = "time"
                 print(f"[stop] max runtime {max_seconds}s reached", flush=True)
                 break
             if stats["blocked"] >= 3:
+                exit_reason = "blocked"
                 print("[stop] IP appears burned (3 blocks) — abort for a fresh runner", flush=True)
                 break
             # Consecutive-block resets on any success, so a merely RATE-LIMITED IP
             # (intermittent timeouts) could grind for hours. Cap total blocks too.
             if stats["captchas"] >= 12:
+                exit_reason = "captchas"
                 print(f"[stop] {stats['captchas']} total blocks — IP rate-limited, abort", flush=True)
                 break
 
@@ -324,6 +329,16 @@ def run(shard_index: int, shard_total: int, out_path: str,
                       f"frontier={len(frontier)} reqs={stats['requests']} "
                       f"captchas={stats['captchas']}", flush=True)
             time.sleep(_polite_delay())
+
+    # Structured completeness signal for the loop-until-complete driver: this window
+    # is DONE only when the frontier drained naturally with no capped/deferred branches.
+    stats["exit_reason"] = exit_reason
+    stats["frontier_remaining"] = len(frontier)
+    stats["new_leaves"] = len(new_keys)
+    stats["complete"] = (exit_reason == "drained" and stats["capped"] == 0 and not frontier)
+    print(f"[result] exit_reason={exit_reason} complete={stats['complete']} "
+          f"new_leaves={len(new_keys)} frontier_remaining={len(frontier)} "
+          f"requests={stats['requests']} capped={stats['capped']}", flush=True)
 
     # Persist the leaf keys crawled this run so the next run skips them (shared cache).
     if visited_out:
