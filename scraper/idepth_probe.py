@@ -18,10 +18,38 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
+import json as _json  # noqa: E402
+
 import config  # noqa: E402
 import parsers  # noqa: E402
 from proxy_manager import ProxyManager  # noqa: E402
 from ra_client import RAClient  # noqa: E402
+
+
+def navnode(client, jsn, mgi=363, idepth=None):
+    """Raw POST func=navnode_fetch (the council's cited bulk endpoint) — payload is
+    {jsn, max_group_index}, distinct from tab_fetch (payload=jsn). Returns the
+    catalog fragment or a short error tag."""
+    j = dict(jsn)
+    if idepth is not None:
+        j["idepth"] = idepth
+    body = {
+        "func": "navnode_fetch",
+        "payload": _json.dumps({"jsn": j, "max_group_index": mgi}, separators=(",", ":")),
+        "api_json_request": "1", "sctchecked": "1",
+    }
+    if client._nck:
+        body["_nck"] = client._nck
+    try:
+        resp = client._send("POST", config.CATALOG_API, data=body, headers=client._api_headers())
+        data = resp.json()
+    except Exception as exc:  # noqa: BLE001
+        return f"(navnode err: {type(exc).__name__})"
+    frag = client._extract_catalog_fragment(data)
+    if frag is not None:
+        return frag
+    # no html sections — show top-level keys so we can see what navnode returned
+    return f"(no fragment; json keys: {list(data.keys())[:8]})" if isinstance(data, dict) else ""
 
 
 def fetch(client, node) -> str:
@@ -107,7 +135,23 @@ def main() -> int:
     cnode = {"jsn": dict(carcode["jsn"])}; cnode["jsn"]["idepth"] = 8
     car = _signal("idepth8-carcode", client.fetch_children(cnode, max_group_index=363))
 
+    # navnode_fetch — the OTHER endpoint the council cited for bulk listings
+    print("\nD) navnode_fetch group, no idepth:")
+    nd0 = navnode(client, group["jsn"])
+    nd0s = _signal("navnode-group", nd0) if isinstance(nd0, str) and nd0.startswith("<") else print(f"  -> {nd0[:200]}") or {"listings": 0, "cats": 0}
+    print("\nE) navnode_fetch group + idepth=8:")
+    nd = navnode(client, group["jsn"], idepth=8)
+    nds = _signal("navnode-group-idepth", nd) if isinstance(nd, str) and nd.startswith("<") else print(f"  -> {nd[:200]}") or {"listings": 0, "cats": 0}
+    print("\nF) navnode_fetch carcode + idepth=8:")
+    nv = navnode(client, carcode["jsn"], idepth=8)
+    nvs = _signal("navnode-carcode-idepth", nv) if isinstance(nv, str) and nv.startswith("<") else print(f"  -> {nv[:200]}") or {"listings": 0, "cats": 0}
+
     print("\n===== VERDICT =====")
+    if nds.get("listings", 0) > 0 and nds.get("cats", 0) > 1:
+        print(f"NAVNODE 11x CONFIRMED: navnode_fetch+idepth group -> {nds['listings']} listings "
+              f"across {nds['cats']} part-types. => $0 free-fleet lives!")
+    if nvs.get("listings", 0) > 50:
+        print(f"NAVNODE VEHICLE 243x: carcode -> {nvs['listings']} listings.")
     if grp["listings"] > 0 and grp["cats"] > 1:
         print(f"GROUP 11x CONFIRMED: 1 group fetch -> {grp['listings']} listings across "
               f"{grp['cats']} part-types. => $0 free-fleet plan.")
