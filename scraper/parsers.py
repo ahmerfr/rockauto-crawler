@@ -686,6 +686,30 @@ def _base_listing(ctx: dict) -> dict:
     }
 
 
+def _style_by_index(html: str) -> dict:
+    """Map each listing index -> its RockAuto style sub-group ("Beam (Standard)",
+    "Improved Frame Style", "Winter"...) by scanning the RAW html in source order.
+
+    A `.listing-sortgroupheader` div opens a section; every listing index that
+    appears after it (until the next header) belongs to it. Done on the raw string
+    — NOT the parsed tree — because lxml relocates the bare <tr> section headers
+    between the <tbody> rows and scrambles document order, which silently drops
+    whichever section lands out of place (a tree walk missed 1 of 7 sections).
+    """
+    out: dict = {}
+    cur = None
+    for m in re.finditer(
+        r'listing-sortgroupheader[^>]*>\s*([^<&]+)'   # 1: section label
+        r'|listing(?:container|td)\[(\d+)\]',          # 2: a listing row index
+        html or "",
+    ):
+        if m.group(1) is not None:
+            cur = m.group(1).strip() or cur
+        elif cur is not None and m.group(2) is not None:
+            out.setdefault(m.group(2), cur)
+    return out
+
+
 def parse_listings(html: str, ctx: dict) -> list[dict]:
     """
     Parse a leaf catalog page's part rows into Listing dicts (CONTRACT §2).
@@ -698,6 +722,7 @@ def parse_listings(html: str, ctx: dict) -> list[dict]:
     ctx = ctx or {}
     soup = _soup(html)
     base = _base_listing(ctx)
+    idx_style = _style_by_index(html)
     listings: list[dict] = []
 
     # Anchor on the part-number element (one per part); fall back to
@@ -729,16 +754,6 @@ def parse_listings(html: str, ctx: dict) -> list[dict]:
             name = _text(name_el) or None
             attributes, description = _extract_attributes_and_desc(cont, name_el)
 
-            # RockAuto splits a leaf's listings into styled sections (wiper blades:
-            # "Beam (Standard)", "Conventional Frame Style", "Winter"...). Each is a
-            # `.listing-sortgroupheader` div preceding its rows. Capture the nearest
-            # preceding one as a reserved "Style" attribute so the storefront can
-            # sub-group listings exactly like RockAuto.
-            style_el = cont.find_previous(class_=re.compile(r"listing-sortgroupheader"))
-            style = _text(style_el) if style_el is not None else None
-            if style:
-                attributes = [{"name": "Style", "value": style}] + attributes
-
             if not name:
                 # Fall back to part number for a human-facing name.
                 name = part_number or brand_name or "Part"
@@ -755,6 +770,14 @@ def parse_listings(html: str, ctx: dict) -> list[dict]:
                     m_idx = re.search(r"\[(\d+)\]", lc.get("id", "") or "")
             if m_idx:
                 idx = m_idx.group(1)
+
+            # Style sub-group, looked up by this row's index from the RAW source
+            # order (see _style_by_index): a reserved "Style" attribute so the
+            # storefront can sub-section listings ("Beam (Standard)", "Winter"...)
+            # exactly like RockAuto.
+            style = idx_style.get(idx) if idx else None
+            if style:
+                attributes = [{"name": "Style", "value": style}] + attributes
 
             # Price + core: index-keyed cells first, container fallback second.
             price = core_charge = None
@@ -1103,36 +1126,51 @@ if __name__ == "__main__":
     # (Standard)", "Winter", ...). Each section is a `.listing-sortgroupheader`
     # div preceding its listing rows; capture it as a reserved "Style" attribute
     # so the storefront can sub-group listings exactly like RockAuto.
+    # Mirror RockAuto's REAL markup: the middle section headers are BARE <tr>s
+    # between <tbody> rows (with style/title attrs + trailing &nbsp;) — the exact
+    # shape lxml relocates, which made a tree walk drop the middle section.
     STYLE_HTML = """
     <table class="nobmp">
       <tbody><tr><td colspan="7">
-        <div class="listing-sortgroupheader mouseover">Beam (Standard)</div>
-      </td></tr></tbody>
-      <tbody class="listing-container-border" id="listingcontainer[10]"><tr>
+        <div class="listing-sortgroupheader mouseover" style="background:#330033" title="Frameless">Beam (Standard)&nbsp;</div>
+      </td></tr>
+      <tr class="listing-container-border" id="listingcontainer[10]">
         <td><span class="listing-final-manufacturer">TRICO</span>
             <span class="listing-final-partnumber">18170</span>
             <a class="span-link-out-desc" href="/z">Flex; Beam</a></td>
         <td id="listingtd[10][price]"><span id="dprice[10][v]">$1.10</span></td>
-      </tr></tbody>
-      <tbody><tr><td colspan="7">
-        <div class="listing-sortgroupheader mouseover">Winter</div>
-      </td></tr></tbody>
-      <tbody class="listing-container-border" id="listingcontainer[11]"><tr>
+      </tr>
+      <tr><td colspan="7">
+        <div class="listing-sortgroupheader mouseover" style="background:#663300" title="Improved">Improved Frame Style&nbsp;</div>
+      </td></tr>
+      <tr class="listing-container-border" id="listingcontainer[11]">
+        <td><span class="listing-final-manufacturer">ANCO</span>
+            <span class="listing-final-partnumber">9717</span>
+            <a class="span-link-out-desc" href="/z">97-Series</a></td>
+        <td id="listingtd[11][price]"><span id="dprice[11][v]">$3.55</span></td>
+      </tr>
+      <tr><td colspan="7">
+        <div class="listing-sortgroupheader mouseover" title="Cold">Winter&nbsp;</div>
+      </td></tr>
+      <tr class="listing-container-border" id="listingcontainer[12]">
         <td><span class="listing-final-manufacturer">TRICO</span>
             <span class="listing-final-partnumber">35170</span>
             <a class="span-link-out-desc" href="/z">Ice; Beam</a></td>
-        <td id="listingtd[11][price]"><span id="dprice[11][v]">$3.24</span></td>
+        <td id="listingtd[12][price]"><span id="dprice[12][v]">$3.24</span></td>
       </tr></tbody>
     </table>
     """
     st = parse_listings(STYLE_HTML, CTX)
-    check(len(st) == 2, f"style: expected 2 parts, got {len(st)}")
+    check(len(st) == 3, f"style: expected 3 parts, got {len(st)}")
     _style = lambda p: next((a["value"] for a in (p.get("attributes") or [])
                              if a.get("name") == "Style"), None)
     beam = next((p for p in st if p["part_number"] == "18170"), None)
+    impr = next((p for p in st if p["part_number"] == "9717"), None)
     wint = next((p for p in st if p["part_number"] == "35170"), None)
     check(beam is not None and _style(beam) == "Beam (Standard)",
           f"18170 Style should be 'Beam (Standard)', got {beam and _style(beam)}")
+    check(impr is not None and _style(impr) == "Improved Frame Style",
+          f"9717 Style should be 'Improved Frame Style', got {impr and _style(impr)}")
     check(wint is not None and _style(wint) == "Winter",
           f"35170 Style should be 'Winter', got {wint and _style(wint)}")
 
