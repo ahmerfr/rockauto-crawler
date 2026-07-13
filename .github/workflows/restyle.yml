@@ -1,0 +1,72 @@
+name: RockAuto Restyle Validate
+
+# A small, FRESH crawl (no visited cache) of a few recent Acura years, data-only
+# (images off). Purpose: prove the fixed parser's style sub-groups survive the
+# full crawl -> artifact -> loader -> storefront chain before the paid full crawl,
+# and backfill enough real style data to light up the storefront demo.
+
+on:
+  workflow_dispatch:
+    inputs:
+      make:
+        description: "make slug"
+        default: "acura"
+      ymin:
+        description: "min year"
+        default: "2014"
+      ymax:
+        description: "max year"
+        default: "2016"
+      budget:
+        description: "max requests"
+        default: "4000"
+
+jobs:
+  restyle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Fresh crawl (data only, with style) — no visited cache
+        env:
+          SP_USE_PROXIES: "0"
+          SP_SOLVE_CAPTCHA: "1"
+          SP_MIN_DELAY: "1.0"
+          SP_MAX_DELAY: "2.5"
+          SP_YEAR_MIN: ${{ github.event.inputs.ymin }}
+          SP_YEAR_MAX: ${{ github.event.inputs.ymax }}
+          SP_DOWNLOAD_IMAGES: "0"
+        run: |
+          python scraper/crawl_jsonl.py \
+            --shard-index 0 --shard-total 1 \
+            --makes "${{ github.event.inputs.make }}" \
+            --out artifacts/restyle.ndjson \
+            --budget "${{ github.event.inputs.budget }}" --max-seconds 3300
+
+      - name: Style summary
+        if: always()
+        run: |
+          echo "=== lines: $(wc -l < artifacts/restyle.ndjson 2>/dev/null || echo 0) ==="
+          echo "=== listings carrying a Style attr ==="
+          grep -c '"name": "Style"' artifacts/restyle.ndjson || echo 0
+          echo "=== distinct styles seen ==="
+          grep -oE '"name": "Style", "value": "[^"]+"' artifacts/restyle.ndjson \
+            | sort | uniq -c | sort -rn | head -20 || true
+
+      - name: Upload restyle ndjson
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rockauto-restyle
+          path: artifacts/restyle.ndjson
+          if-no-files-found: warn
