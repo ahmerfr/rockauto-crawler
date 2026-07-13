@@ -62,35 +62,43 @@ def main() -> int:
     make = next((m for m in makes if "honda" in ((m.get("href") or "") + str(m.get("make") or "")).lower()), makes[0])
     print(f"make: {make.get('make')}")
 
-    # Measure NON-EMPTY part-type leaves on ESTABLISHED years (skip the newest 3 —
-    # brand-new model-years have no parts yet and would read as 0 bytes).
+    # Target ONE established, parts-heavy carcode (Accord ~2012-2018) and measure up
+    # to 18 NON-EMPTY part-type leaves across its groups. Bounded so it fits the run.
+    target = None
+    for y in kids(client, make, "year"):
+        yr = y.get("year")
+        if not (yr and 2012 <= yr <= 2018):
+            continue
+        for mo in kids(client, y, "model"):
+            if "accord" in (str(mo.get("model") or "")).lower():
+                ccs = kids(client, mo, "carcode")
+                if ccs:
+                    target = (yr, mo, ccs[0])
+                    break
+        if target:
+            break
+    if not target:
+        print("!! no established Accord carcode found"); return 1
+    yr, mo, cc = target
+    print(f"measuring on {mo.get('model')} {yr} carcode {cc.get('carcode')}\n")
+
     tot_wire = tot_dec = tot_out = tot_list = 0
     n = 0
-    years = kids(client, make, "year")
-    for y in years[3:3 + 8]:
-        if n >= 30:
+    for g in kids(client, cc, "groupname"):
+        if n >= 18:
             break
-        for mo in kids(client, y, "model")[:4]:
-            if n >= 30:
+        gname = (g.get("jsn") or {}).get("groupname") or g.get("label")
+        for pt in kids(client, g, "parttype"):
+            if n >= 18:
                 break
-            ccs = kids(client, mo, "carcode")
-            if not ccs:
+            try:
+                wire, dec, out, nl = leaf_wire(client, pt)
+            except Exception as exc:  # noqa: BLE001
+                print("  leaf err:", exc); continue
+            if nl <= 0:
                 continue
-            for g in kids(client, ccs[0], "groupname"):
-                if n >= 30:
-                    break
-                for pt in kids(client, g, "parttype")[:4]:
-                    try:
-                        wire, dec, out, nl = leaf_wire(client, pt)
-                    except Exception as exc:  # noqa: BLE001
-                        print("  leaf err:", exc); continue
-                    if nl <= 0:            # empty part-type — cheap, skip from the avg
-                        continue
-                    tot_wire += wire; tot_dec += dec; tot_out += out; tot_list += nl; n += 1
-                    print(f"  leaf: {nl} listings  gzip={wire/1024:.1f}KB  decomp={dec/1024:.1f}KB "
-                          f"({y.get('year')} {mo.get('model')})")
-                    if n >= 30:
-                        break
+            tot_wire += wire; tot_dec += dec; tot_out += out; tot_list += nl; n += 1
+            print(f"  leaf: {nl} listings  gzip={wire/1024:.1f}KB  decomp={dec/1024:.1f}KB  [{gname}]")
     if not n:
         print("!! no non-empty leaves measured"); return 1
     print(f"\nmeasured {n} non-empty leaves")
