@@ -78,6 +78,19 @@ def _t(s, n: int):
     return s
 
 
+def _variant_code(v: dict, i: int = 0) -> str:
+    """Deterministic natural key for a part variant — the (part_id, code) unique
+    key. RockAuto's option `value` and the old positional `opt{i}` both drift
+    between crawls, so the same logical option would upsert under two codes and
+    duplicate. Derive the code from the stable option label (+ pack size) so one
+    option always maps to one row. Used when the parsed variant carries no code."""
+    base = slugify(v.get("type") or "", "")
+    ps = v.get("pack_size")
+    if ps:
+        base = f"{base}-{ps}" if base else f"pack-{ps}"
+    return _t(base, 64) or f"opt{i}"
+
+
 def _jload(v, default):
     """Coerce a JSON column (str | already-decoded | None) into a Python value."""
     if v is None:
@@ -356,7 +369,7 @@ class Loader:
             # Backward/robustness: crawls before the `code` field, and options
             # RockAuto lists with only a price (no label), still load. Fall back
             # to a position-stable code and a generic label.
-            code = v.get("code") or f"opt{i}"
+            code = v.get("code") or _variant_code(v, i)
             vtype = v.get("type") or f"Option {i + 1}"
             vp = _f(v.get("price"))
             if vp is None:
@@ -715,6 +728,14 @@ def selftest() -> int:
         assert r["code"] == "0-0-0-1" and r["is_default"] == 0 and r["oos"] == 1 \
             and r["pack_size"] == 6 and float(r["pack_total"]) == 36.54, \
             f"pack/oos variant wrong: {r}"
+        # Fallback variant code must be deterministic + content-based (never the
+        # volatile positional opt{i}), so a re-crawl can't duplicate the option.
+        assert _variant_code({"type": "Regular Inventory"}, 3) == "regular-inventory", \
+            _variant_code({"type": "Regular Inventory"}, 3)
+        assert _variant_code({"type": "Regular Inventory"}, 3) \
+            == _variant_code({"type": "Regular Inventory"}, 9), "variant code must ignore position"
+        assert _variant_code({"type": "Concentrated", "pack_size": 6}, 0) == "concentrated-6", \
+            _variant_code({"type": "Concentrated", "pack_size": 6}, 0)
         cur.execute("SELECT COUNT(*) n FROM part_images WHERE part_id=%s", [pid])
         assert cur.fetchone()["n"] == 1, "image not loaded"
         cur.execute("SELECT quantity FROM inventory WHERE part_id=%s", [pid])

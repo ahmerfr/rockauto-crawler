@@ -14,11 +14,22 @@ $label = trim($vehicle['year'] . ' ' . $vehicle['make'] . ' ' . $vehicle['model'
 <p class="subtitle">For <?= e($label) ?> &mdash; <?= count($parts) ?> part<?= count($parts) == 1 ? '' : 's' ?></p>
 
 <div class="part-list">
+  <?php $curStyle = "\0"; // sentinel: distinct from any real style incl. null ?>
   <?php foreach ($parts as $p): ?>
+    <?php if (($p['style'] ?? null) !== $curStyle): $curStyle = $p['style'] ?? null; ?>
+      <?php if ($curStyle !== null): ?>
+        <h2 class="style-head"><?= e($curStyle) ?></h2>
+      <?php endif; ?>
+    <?php endif; ?>
+    <?php
+      $nv   = (int)($p['n_variants'] ?? 0);
+      $vmin = $p['vmin']; $vmax = $p['vmax'];
+      $hasRange = $nv > 1 && $vmin !== null && $vmax !== null && $vmin != $vmax;
+    ?>
     <article class="part-row">
       <div class="part-thumb">
         <?php if (!empty($p['primary_image_path'])): ?>
-          <img src="<?= e($p['primary_image_path']) ?>" alt="<?= e($p['name']) ?>" loading="lazy"
+          <img src="<?= e(img_url($p['primary_image_path'])) ?>" alt="<?= e($p['name']) ?>" loading="lazy"
                onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'noimg',textContent:'No image'}))">
         <?php else: ?>
           <div class="noimg">No image</div>
@@ -34,13 +45,20 @@ $label = trim($vehicle['year'] . ' ' . $vehicle['make'] . ' ' . $vehicle['model'
       </div>
       <div class="part-buy">
         <div class="price"><?= money($p['price']) ?></div>
+        <?php if ($hasRange): ?>
+          <div class="opt-range"><?= $nv ?> options &middot; <?= money($vmin) ?>&ndash;<?= money($vmax) ?></div>
+        <?php endif; ?>
         <?php if ((float)$p['core_charge'] > 0): ?>
           <div class="core">+<?= money($p['core_charge']) ?> core</div>
         <?php endif; ?>
-        <form method="post" action="<?= e($_controller->url('/cart/add')) ?>">
-          <input type="hidden" name="sku" value="<?= e($p['sku']) ?>">
-          <button class="btn btn-primary btn-sm" type="submit">Add to cart</button>
-        </form>
+        <?php if ($nv > 1): ?>
+          <a class="btn btn-primary btn-sm" href="<?= e($_controller->url('/part/' . rawurlencode($p['sku']))) ?>">Choose options</a>
+        <?php else: ?>
+          <form method="post" action="<?= e($_controller->url('/cart/add')) ?>">
+            <input type="hidden" name="sku" value="<?= e($p['sku']) ?>">
+            <button class="btn btn-primary btn-sm" type="submit">Add to cart</button>
+          </form>
+        <?php endif; ?>
       </div>
     </article>
   <?php endforeach; ?>

@@ -16,12 +16,22 @@ $label = trim($vehicle['year'] . ' ' . $vehicle['make'] . ' ' . $vehicle['model'
 <?php if (!$categories): ?>
   <p class="empty">No parts are loaded for this vehicle yet. Load an ACES/PIES feed to populate fitment.</p>
 <?php else: ?>
-  <div class="cat-grid">
-    <?php foreach ($categories as $c): ?>
-      <a class="cat-card" href="<?= e($_controller->url('/vehicle/' . $vehicle['slug'] . '/c/' . $c['slug'])) ?>">
-        <span class="cat-name"><?= e($c['name']) ?></span>
-        <span class="cat-count"><?= (int)$c['n'] ?> part<?= $c['n'] == 1 ? '' : 's' ?></span>
-      </a>
-    <?php endforeach; ?>
-  </div>
+  <?php
+    // Group leaf part-types under their RockAuto parent group ("Wiper & Washer"...).
+    $groups = [];
+    foreach ($categories as $c) { $groups[$c['group_name']][] = $c; }
+  ?>
+  <?php foreach ($groups as $gname => $cats): ?>
+    <section class="cat-group">
+      <h2 class="cat-group-title"><?= e($gname) ?></h2>
+      <div class="cat-grid">
+        <?php foreach ($cats as $c): ?>
+          <a class="cat-card" href="<?= e($_controller->url('/vehicle/' . $vehicle['slug'] . '/c/' . $c['slug'])) ?>">
+            <span class="cat-name"><?= e($c['name']) ?></span>
+            <span class="cat-count"><?= (int)$c['n'] ?> part<?= $c['n'] == 1 ? '' : 's' ?></span>
+          </a>
+        <?php endforeach; ?>
+      </div>
+    </section>
+  <?php endforeach; ?>
 <?php endif; ?>

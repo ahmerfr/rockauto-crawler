@@ -39,15 +39,19 @@ class CatalogController extends Controller
         $vehicle = $this->loadVehicle($slug);
         if (!$vehicle) { $this->notFoundResponse(); return; }
 
-        // Leaf categories that actually have parts fitting this vehicle, with counts.
+        // Leaf part-types fitting this vehicle, with counts, tagged with their
+        // RockAuto parent group (e.g. "Wiper & Washer") so the view can group them.
         $stmt = $db->prepare(
-            "SELECT c.name, c.slug, COUNT(DISTINCT p.id) AS n
+            "SELECT c.name, c.slug, COUNT(DISTINCT p.id) AS n,
+                    COALESCE(par.name, c.name)               AS group_name,
+                    COALESCE(par.position, c.position, 9999) AS group_pos
                FROM part_fitment pf
-               JOIN parts p     ON p.id = pf.part_id
+               JOIN parts p      ON p.id = pf.part_id
                JOIN categories c ON c.id = p.category_id
+          LEFT JOIN categories par ON par.id = c.parent_id
               WHERE pf.vehicle_id = :vid
               GROUP BY c.id
-              ORDER BY c.name"
+              ORDER BY group_pos, group_name, COALESCE(c.position, 9999), c.name"
         );
         $stmt->execute([':vid' => $vehicle['id']]);
         $categories = $stmt->fetchAll();
@@ -68,14 +72,24 @@ class CatalogController extends Controller
         $category = $stmt->fetch();
         if (!$category) { $this->notFoundResponse(); return; }
 
+        // Each part carries its variant span (RockAuto's inventory-tier / "Choose
+        // Type" dropdown) and its style sub-group ("Beam (Standard)", "Winter"...)
+        // so the list can surface multiple prices and section like RockAuto.
         $stmt = $db->prepare(
             "SELECT p.sku, p.part_number, p.name, p.price, p.core_charge,
-                    p.primary_image_path, b.name AS brand, pf.note
+                    p.primary_image_path, b.name AS brand, pf.note,
+                    (SELECT COUNT(*)   FROM part_variants v WHERE v.part_id = p.id) AS n_variants,
+                    (SELECT MIN(v.price) FROM part_variants v
+                        WHERE v.part_id = p.id AND v.price IS NOT NULL) AS vmin,
+                    (SELECT MAX(v.price) FROM part_variants v
+                        WHERE v.part_id = p.id AND v.price IS NOT NULL) AS vmax,
+                    (SELECT a.`value` FROM part_attributes a
+                        WHERE a.part_id = p.id AND a.name = 'Style' LIMIT 1) AS style
                FROM part_fitment pf
                JOIN parts p  ON p.id = pf.part_id
           LEFT JOIN brands b ON b.id = p.brand_id
               WHERE pf.vehicle_id = :vid AND p.category_id = :cid
-              ORDER BY (p.price IS NULL), b.name, p.price"
+              ORDER BY (style IS NULL), style, (p.price IS NULL), p.price, b.name"
         );
         $stmt->execute([':vid' => $vehicle['id'], ':cid' => $category['id']]);
         $parts = $stmt->fetchAll();

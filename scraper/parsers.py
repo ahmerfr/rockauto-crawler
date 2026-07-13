@@ -728,6 +728,17 @@ def parse_listings(html: str, ctx: dict) -> list[dict]:
             name_el = _first_class(cont, "span-link-out-desc")
             name = _text(name_el) or None
             attributes, description = _extract_attributes_and_desc(cont, name_el)
+
+            # RockAuto splits a leaf's listings into styled sections (wiper blades:
+            # "Beam (Standard)", "Conventional Frame Style", "Winter"...). Each is a
+            # `.listing-sortgroupheader` div preceding its rows. Capture the nearest
+            # preceding one as a reserved "Style" attribute so the storefront can
+            # sub-group listings exactly like RockAuto.
+            style_el = cont.find_previous(class_=re.compile(r"listing-sortgroupheader"))
+            style = _text(style_el) if style_el is not None else None
+            if style:
+                attributes = [{"name": "Style", "value": style}] + attributes
+
             if not name:
                 # Fall back to part number for a human-facing name.
                 name = part_number or brand_name or "Part"
@@ -1086,6 +1097,44 @@ if __name__ == "__main__":
               f"part2 protocol-relative image failed: {p1['image_urls']}")
         check(p1["core_charge"] is None, "part2 core should be None")
         check(p1["interchange"] is None, "part2 interchange should be None")
+
+    # ---- style sub-groups (RockAuto's `.listing-sortgroupheader` sections) ----
+    # A wiper-blade leaf splits its listings into styled sections ("Beam
+    # (Standard)", "Winter", ...). Each section is a `.listing-sortgroupheader`
+    # div preceding its listing rows; capture it as a reserved "Style" attribute
+    # so the storefront can sub-group listings exactly like RockAuto.
+    STYLE_HTML = """
+    <table class="nobmp">
+      <tbody><tr><td colspan="7">
+        <div class="listing-sortgroupheader mouseover">Beam (Standard)</div>
+      </td></tr></tbody>
+      <tbody class="listing-container-border" id="listingcontainer[10]"><tr>
+        <td><span class="listing-final-manufacturer">TRICO</span>
+            <span class="listing-final-partnumber">18170</span>
+            <a class="span-link-out-desc" href="/z">Flex; Beam</a></td>
+        <td id="listingtd[10][price]"><span id="dprice[10][v]">$1.10</span></td>
+      </tr></tbody>
+      <tbody><tr><td colspan="7">
+        <div class="listing-sortgroupheader mouseover">Winter</div>
+      </td></tr></tbody>
+      <tbody class="listing-container-border" id="listingcontainer[11]"><tr>
+        <td><span class="listing-final-manufacturer">TRICO</span>
+            <span class="listing-final-partnumber">35170</span>
+            <a class="span-link-out-desc" href="/z">Ice; Beam</a></td>
+        <td id="listingtd[11][price]"><span id="dprice[11][v]">$3.24</span></td>
+      </tr></tbody>
+    </table>
+    """
+    st = parse_listings(STYLE_HTML, CTX)
+    check(len(st) == 2, f"style: expected 2 parts, got {len(st)}")
+    _style = lambda p: next((a["value"] for a in (p.get("attributes") or [])
+                             if a.get("name") == "Style"), None)
+    beam = next((p for p in st if p["part_number"] == "18170"), None)
+    wint = next((p for p in st if p["part_number"] == "35170"), None)
+    check(beam is not None and _style(beam) == "Beam (Standard)",
+          f"18170 Style should be 'Beam (Standard)', got {beam and _style(beam)}")
+    check(wint is not None and _style(wint) == "Winter",
+          f"35170 Style should be 'Winter', got {wint and _style(wint)}")
 
     # ---- CAPTCHA detection ----
     check(is_captcha("", "https://www.rockauto.com/captcha/?redirecturl=x") is True,
