@@ -1,0 +1,144 @@
+name: RockAuto Evomi Crawl (US, capped)
+
+# Full-catalog DATA crawl through the Evomi residential gateway (US-pinned so
+# RockAuto serves real US prices — non-US IPs get inflated international prices).
+# 20 disjoint make-shards run in parallel; each is metered and HARD-STOPS at its
+# slice of the total byte budget, so the whole fleet can never spend past
+# `total_gb` (default 14.5 GB ≈ $17, well under the $30 wall). Per-shard byte
+# counters + the shared visited-leaf cache persist across dispatches, so re-running
+# resumes toward full coverage. Data only (no images — those are fetched free
+# elsewhere) to spend the paid bytes on listings. Manual dispatch ONLY: no cron,
+# so nothing keeps burning runs once shards hit their cap.
+
+on:
+  workflow_dispatch:
+    inputs:
+      total_gb:
+        description: "TOTAL byte budget across all shards (GB). 14.5 ≈ $17. Split evenly over 20 shards."
+        default: "14.5"
+      min_delay:
+        description: "Min politeness delay per request (s). Evomi rotates IPs so this can be small."
+        default: "0.3"
+      max_delay:
+        default: "0.8"
+      priority_makes:
+        description: "Optional comma-separated makes to crawl first (e.g. big US brands)."
+        default: ""
+
+env:
+  SHARD_TOTAL: "20"
+
+jobs:
+  crawl:
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        index: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install tesseract OCR + Python deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # Shared cross-run memory of already-crawled LEAF pages -> resume toward full coverage.
+      - name: Restore crawled-leaves cache
+        uses: actions/cache/restore@v4
+        with:
+          path: coverage/visited.txt
+          key: rockauto-visited-${{ github.run_id }}
+          restore-keys: rockauto-visited-
+
+      # Per-shard cumulative byte counter so the HARD cap survives resumes/re-dispatches.
+      - name: Restore this shard's byte counter
+        uses: actions/cache/restore@v4
+        with:
+          path: coverage/bytes-${{ matrix.index }}.txt
+          key: rockauto-bytes-${{ matrix.index }}-${{ github.run_id }}
+          restore-keys: rockauto-bytes-${{ matrix.index }}-
+
+      - name: Crawl shard ${{ matrix.index }} via Evomi (US)
+        env:
+          SP_USE_EVOMI: "1"
+          EVOMI_HOST: ${{ secrets.EVOMI_HOST }}
+          EVOMI_PORT: ${{ secrets.EVOMI_PORT }}
+          EVOMI_USER: ${{ secrets.EVOMI_USER }}
+          EVOMI_PASS: ${{ secrets.EVOMI_PASS }}
+          EVOMI_COUNTRY: "US"        # RockAuto shows correct US prices only to US IPs
+          SP_SOLVE_CAPTCHA: "1"      # OCR-solve any incidental securimage wall
+          SP_MIN_DELAY: ${{ github.event.inputs.min_delay || '0.3' }}
+          SP_MAX_DELAY: ${{ github.event.inputs.max_delay || '0.8' }}
+          SP_YEAR_MIN: "1900"
+          SP_YEAR_MAX: "2035"
+          SP_MARKETS: ""
+          SP_DOWNLOAD_IMAGES: "0"    # data only — paid bytes go to listings, not photos
+          SP_BUDGET_STATE: coverage/bytes-${{ matrix.index }}.txt
+          PRIORITY_MAKES: ${{ github.event.inputs.priority_makes || '' }}
+          VISITED_FILE: coverage/visited.txt
+          VISITED_OUT: artifacts/visited-${{ matrix.index }}.txt
+        run: |
+          mkdir -p coverage artifacts
+          TOTAL="${{ github.event.inputs.total_gb || '14.5' }}"
+          SHARD_GB=$(python -c "print(f'{$TOTAL/${{ env.SHARD_TOTAL }}:.4f}')")
+          echo "shard ${{ matrix.index }} byte cap = ${SHARD_GB} GB (of ${TOTAL} GB total / ${{ env.SHARD_TOTAL }} shards)"
+          SP_MAX_GB="$SHARD_GB" python scraper/crawl_jsonl.py \
+            --shard-index "${{ matrix.index }}" \
+            --shard-total "${{ env.SHARD_TOTAL }}" \
+            --out "artifacts/shard-${{ matrix.index }}.ndjson" \
+            --budget 5000000 \
+            --max-seconds 19000
+
+      - name: Upload shard artifact (NDJSON + new-leaves list)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rockauto-evomi-shard-${{ matrix.index }}
+          path: |
+            artifacts/shard-${{ matrix.index }}.ndjson
+            artifacts/visited-${{ matrix.index }}.txt
+          if-no-files-found: warn
+
+      - name: Save this shard's byte counter
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: coverage/bytes-${{ matrix.index }}.txt
+          key: rockauto-bytes-${{ matrix.index }}-${{ github.run_id }}
+
+  # Merge newly-crawled leaves into the shared cache so the next dispatch resumes deeper.
+  aggregate:
+    needs: crawl
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Restore prior crawled-leaves
+        uses: actions/cache/restore@v4
+        with:
+          path: coverage/visited.txt
+          key: rockauto-visited-agg-${{ github.run_id }}
+          restore-keys: rockauto-visited-
+      - name: Download shard artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dl
+      - name: Merge new leaves + report total bytes spent
+        run: |
+          mkdir -p coverage
+          touch coverage/visited.txt
+          find dl -name 'visited-*.txt' -exec cat {} + >> coverage/visited.txt 2>/dev/null || true
+          sort -u coverage/visited.txt -o coverage/visited.txt
+          echo "total leaves crawled to date: $(wc -l < coverage/visited.txt)"
+      - name: Save updated crawled-leaves cache
+        uses: actions/cache/save@v4
+        with:
+          path: coverage/visited.txt
+          key: rockauto-visited-${{ github.run_id }}
