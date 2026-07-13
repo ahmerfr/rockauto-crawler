@@ -211,6 +211,10 @@ def run(shard_index: int, shard_total: int, out_path: str,
             except Exception as exc:  # noqa: BLE001
                 print(f"[proxy] refill skipped: {exc}", flush=True)
     client = RAClient(proxies)
+    # RockAuto rate-limits per IP (~250 req). Evomi hands out unlimited fresh IPs
+    # per connection, so proactively start a new session (new IP) every N requests
+    # to stay under the ceiling instead of only reacting once blocked.
+    rotate_every = int(os.getenv("SP_ROTATE_EVERY") or (80 if os.getenv("SP_USE_EVOMI") == "1" else 0))
 
     # Seed: explicit makes, else discover + shard the full catalog make list.
     if makes_override:
@@ -292,6 +296,11 @@ def run(shard_index: int, shard_total: int, out_path: str,
 
             stats["requests"] += 1
             per_make[mk] = per_make.get(mk, 0) + 1
+            if rotate_every and stats["requests"] % rotate_every == 0:
+                try:
+                    client.new_session()   # fresh Evomi IP before the per-IP limit
+                except Exception:          # noqa: BLE001 - rotation is best-effort
+                    pass
             try:
                 listings, kids = process(client, node, tree_only)
             except Blocked:
