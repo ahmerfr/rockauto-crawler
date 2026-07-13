@@ -1,14 +1,13 @@
-"""idepth_probe.py — the 5-minute GATE test for the request-slasher plan.
+"""idepth_probe.py — the GATE test for the request-slasher plan.
 
 Question: does RockAuto's `idepth` knob on func=tab_fetch INLINE part-listing rows
-(so ONE fetch per group returns every part-type's listings = ~11x fewer requests;
-or per carcode = ~243x), or does it only pre-expand nav children (slasher dead)?
+(ONE fetch per group returns every part-type's listings = ~11x fewer requests; per
+carcode = ~243x), or only pre-expand nav children (slasher dead)?
 
-MUST run from an UNBLOCKED IP (GitHub Actions Azure runner) — local/datacenter IPs
-are ASN-walled by RockAuto. Read-only, no writes, no code paths changed.
-
-  python scraper/idepth_probe.py            # default carcode 3309958 (Honda Accord 2015)
-  PROBE_CARCODE=<n> python scraper/idepth_probe.py
+Drills the REAL tree (make->year->model->carcode->group) using live parse_nav jsn
+at each level, then re-fetches a real group/carcode node with idepth=8 and checks
+whether listings come back. MUST run from an unblocked IP (GitHub Actions Azure
+runner). Read-only.
 """
 from __future__ import annotations
 
@@ -19,80 +18,106 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
+import config  # noqa: E402
 import parsers  # noqa: E402
 from proxy_manager import ProxyManager  # noqa: E402
 from ra_client import RAClient  # noqa: E402
 
 
+def fetch(client, node) -> str:
+    """Fetch a parse_nav node's page/fragment via href (GET) or jsn (tab_fetch)."""
+    if node.get("href"):
+        return client.get(node["href"])
+    if node.get("jsn"):
+        return client.fetch_children(node, max_group_index=363)
+    return ""
+
+
+def kids(client, node, want):
+    """parse_nav children of `node` whose nodetype == want (or all if want None)."""
+    ns = parsers.parse_nav(fetch(client, node))
+    types = {}
+    for n in ns:
+        types[n.get("nodetype")] = types.get(n.get("nodetype"), 0) + 1
+    sel = [n for n in ns if n.get("nodetype") == want] if want else ns
+    return sel, types
+
+
 def _signal(tag: str, frag: str):
-    """Raw listing-presence signal in a catalog fragment (no full parse needed)."""
     listingtd = len(re.findall(r"listingtd\[", frag))
-    prices = len(re.findall(r"pricebreakdown\[|\$\d", frag))
-    parttypes = len(re.findall(r'name=["\']?nvljs\[|navlabellink', frag))  # part-type headers/links
     try:
         listings = parsers.parse_listings(frag, {"markets": ["US"]})
     except Exception as exc:  # noqa: BLE001
         listings = []
         print(f"  [{tag}] parse_listings error: {exc}")
     cats = sorted({(l.get("category_path") or "") for l in listings})
-    print(f"  [{tag}] frag={len(frag)}c  listingtd={listingtd}  price-markers={prices}  "
-          f"parttype-markers={parttypes}  parsed_listings={len(listings)}  "
+    print(f"  [{tag}] frag={len(frag)}c listingtd={listingtd} parsed_listings={len(listings)} "
           f"distinct_category_paths={len(cats)}")
-    if cats[:6]:
-        print(f"      category_paths sample: {cats[:6]}")
+    if cats[:8]:
+        print(f"      cats: {cats[:8]}")
     return {"listingtd": listingtd, "listings": len(listings), "cats": len(cats)}
 
 
 def main() -> int:
-    carcode = os.getenv("PROBE_CARCODE", "3309958")
-    jsdata = {"markets": [{"c": "US"}], "mktlist": "US", "Show": 1}
-
     client = RAClient(ProxyManager())
     client.new_session()
-    print(f"session warmed: _nck={'yes' if client._nck else 'NO'}  carcode={carcode}")
+    print(f"session: _nck={'yes' if client._nck else 'NO'}")
 
-    # 1) carcode children (normal) -> its groups, to grab a REAL group jsn
-    carnode = {"jsn": {"carcode": carcode, "nodetype": "carcode", "tab": "catalog", "jsdata": jsdata}}
-    frag = client.fetch_children(carnode, max_group_index=363)
-    groups = [n for n in parsers.parse_nav(frag) if (n.get("jsn") or {}).get("nodetype") == "groupname"]
-    print(f"carcode {carcode}: {len(groups)} groups (fragment {len(frag)}c)")
-    if not groups:
-        print("!! no groups — carcode invalid or IP blocked; cannot probe. Raw head:")
-        print(frag[:400])
-        return 1
-    g = groups[0]
-    gname = (g.get("jsn") or {}).get("groupname") or g.get("label")
+    makes = [n for n in parsers.parse_nav(client.get(config.CATALOG_ROOT))
+             if n.get("nodetype") == "make"]
+    print(f"discovered {len(makes)} makes")
+    make = next((m for m in makes if "acura" in ((m.get("href") or "") + str(m.get("make") or "")).lower()),
+                makes[0] if makes else None)
+    if not make:
+        print("!! no makes"); return 1
+    print(f"make: {make.get('make') or make.get('href')}")
+
+    # drill make -> year -> model -> carcode -> group, retrying siblings until groups appear
+    years, t = kids(client, make, "year")
+    print(f"years: {len(years)}  (child types {t})")
+    group = carcode = None
+    for y in years[:6]:
+        models, _ = kids(client, y, "model")
+        for mo in models[:4]:
+            ccs, _ = kids(client, mo, "carcode")
+            for cc in ccs[:3]:
+                grps, tt = kids(client, cc, "groupname")
+                if grps:
+                    carcode, group = cc, grps[0]
+                    print(f"reached: year={y.get('year')} model={mo.get('model')} "
+                          f"carcode={cc.get('carcode')} -> {len(grps)} groups (types {tt})")
+                    break
+            if group:
+                break
+        if group:
+            break
+    if not group:
+        print("!! could not reach a carcode with groups"); return 1
+    gname = (group.get("jsn") or {}).get("groupname") or group.get("label")
     print(f"probing group: {gname!r}\n")
 
-    # 2) BASELINE — the group WITHOUT idepth (today's behaviour = nav children)
-    print("A) BASELINE group, no idepth (expect nav children / few-or-no listings):")
-    base = client.fetch_children({"jsn": dict(g["jsn"])}, max_group_index=363)
-    _signal("base", base)
+    print("A) BASELINE group, no idepth:")
+    _signal("base", fetch(client, group))
 
-    # 3) THE TEST — group WITH idepth=8 (does it inline ALL part-types' listings?)
-    print("\nB) group + idepth=8 (THE 11x TEST):")
-    gj = dict(g["jsn"]); gj["idepth"] = 8
-    deep = client.fetch_children({"jsn": gj}, max_group_index=363)
-    grp = _signal("idepth8-group", deep)
+    print("\nB) group + idepth=8  (THE 11x TEST):")
+    gnode = {"jsn": dict(group["jsn"])}; gnode["jsn"]["idepth"] = 8
+    grp = _signal("idepth8-group", client.fetch_children(gnode, max_group_index=363))
 
-    # 4) STRETCH — whole carcode + idepth=8 (the 243x test)
-    print("\nC) carcode + idepth=8 (the 243x whole-vehicle test):")
-    cj = dict(carnode["jsn"]); cj["idepth"] = 8
-    veh = client.fetch_children({"jsn": cj}, max_group_index=363)
-    car = _signal("idepth8-carcode", veh)
+    print("\nC) carcode + idepth=8  (the 243x whole-vehicle test):")
+    cnode = {"jsn": dict(carcode["jsn"])}; cnode["jsn"]["idepth"] = 8
+    car = _signal("idepth8-carcode", client.fetch_children(cnode, max_group_index=363))
 
     print("\n===== VERDICT =====")
     if grp["listings"] > 0 and grp["cats"] > 1:
-        print(f"GROUP-LEVEL 11x CONFIRMED: one group fetch returned {grp['listings']} listings "
-              f"across {grp['cats']} part-types. -> $0 free-fleet plan.")
+        print(f"GROUP 11x CONFIRMED: 1 group fetch -> {grp['listings']} listings across "
+              f"{grp['cats']} part-types. => $0 free-fleet plan.")
     elif grp["listings"] > 0:
-        print(f"PARTIAL: group idepth returned {grp['listings']} listings but only {grp['cats']} "
-              f"category path(s) — modest cut, verify it's not a single part-type.")
+        print(f"GROUP partial: {grp['listings']} listings, {grp['cats']} category path(s).")
     else:
-        print("GROUP idepth returned NO listings (nav-only). Slasher likely DEAD at group level.")
+        print("GROUP idepth = NO listings (nav-only). Slasher dead at group level -> residential fallback.")
     if car["listings"] > 50 and car["cats"] > 3:
-        print(f"VEHICLE-LEVEL 243x LIKELY: carcode idepth returned {car['listings']} listings "
-              f"across {car['cats']} part-types — whole vehicle in ONE request.")
+        print(f"VEHICLE 243x LIKELY: carcode idepth -> {car['listings']} listings across "
+              f"{car['cats']} part-types in ONE request.")
     return 0
 
 
