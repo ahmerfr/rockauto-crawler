@@ -59,36 +59,41 @@ def main() -> int:
     client = RAClient(ProxyManager())
     client.new_session()
     makes = [n for n in parsers.parse_nav(client.get(config.CATALOG_ROOT)) if n.get("nodetype") == "make"]
-    make = next((m for m in makes if "acura" in ((m.get("href") or "") + str(m.get("make") or "")).lower()), makes[0])
+    make = next((m for m in makes if "honda" in ((m.get("href") or "") + str(m.get("make") or "")).lower()), makes[0])
+    print(f"make: {make.get('make')}")
 
-    # collect real part-type leaves across a few vehicles
-    leaves = []
-    for y in kids(client, make, "year")[:3]:
-        for mo in kids(client, y, "model")[:3]:
-            for cc in kids(client, mo, "carcode")[:1]:
-                for g in kids(client, cc, "groupname")[:4]:
-                    for pt in kids(client, g, "parttype")[:3]:
-                        leaves.append(pt)
-                        if len(leaves) >= 40:
-                            break
-                    if len(leaves) >= 40:
-                        break
-            if len(leaves) >= 40:
-                break
-        if len(leaves) >= 40:
-            break
-    print(f"measuring {len(leaves)} real part-type leaf fetches...\n")
-
+    # Measure NON-EMPTY part-type leaves on ESTABLISHED years (skip the newest 3 —
+    # brand-new model-years have no parts yet and would read as 0 bytes).
     tot_wire = tot_dec = tot_out = tot_list = 0
     n = 0
-    for pt in leaves:
-        try:
-            wire, dec, out, nl = leaf_wire(client, pt)
-        except Exception as exc:  # noqa: BLE001
-            print("  leaf err:", exc); continue
-        tot_wire += wire; tot_dec += dec; tot_out += out; tot_list += nl; n += 1
+    years = kids(client, make, "year")
+    for y in years[3:3 + 8]:
+        if n >= 30:
+            break
+        for mo in kids(client, y, "model")[:4]:
+            if n >= 30:
+                break
+            ccs = kids(client, mo, "carcode")
+            if not ccs:
+                continue
+            for g in kids(client, ccs[0], "groupname"):
+                if n >= 30:
+                    break
+                for pt in kids(client, g, "parttype")[:4]:
+                    try:
+                        wire, dec, out, nl = leaf_wire(client, pt)
+                    except Exception as exc:  # noqa: BLE001
+                        print("  leaf err:", exc); continue
+                    if nl <= 0:            # empty part-type — cheap, skip from the avg
+                        continue
+                    tot_wire += wire; tot_dec += dec; tot_out += out; tot_list += nl; n += 1
+                    print(f"  leaf: {nl} listings  gzip={wire/1024:.1f}KB  decomp={dec/1024:.1f}KB "
+                          f"({y.get('year')} {mo.get('model')})")
+                    if n >= 30:
+                        break
     if not n:
-        print("!! no leaves measured"); return 1
+        print("!! no non-empty leaves measured"); return 1
+    print(f"\nmeasured {n} non-empty leaves")
 
     avg_wire = tot_wire / n; avg_dec = tot_dec / n; avg_out = tot_out / n; avg_list = tot_list / n
     # residential billed ~= gzipped response wire + request-out + ~0.8KB TLS/header overhead
