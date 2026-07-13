@@ -8,8 +8,11 @@ name: RockAuto idepth Probe
 on:
   workflow_dispatch:
     inputs:
+      script:
+        description: "probe module under scraper/ (idepth_probe or dedup_probe)"
+        default: "idepth_probe"
       carcode:
-        description: "carcode to probe (default 3309958 = Honda Accord 2015 3.5L)"
+        description: "carcode to probe (idepth_probe only)"
         default: "3309958"
 
 jobs:
@@ -33,4 +36,4 @@ jobs:
           SP_MIN_DELAY: "1.0"
           SP_MAX_DELAY: "2.0"
           PROBE_CARCODE: ${{ github.event.inputs.carcode }}
-        run: python scraper/idepth_probe.py
+        run: python scraper/${{ github.event.inputs.script }}.py
