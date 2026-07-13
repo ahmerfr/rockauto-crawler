@@ -78,21 +78,30 @@ def main() -> int:
 
     tot_wire = tot_dec = tot_out = tot_list = 0
     n = 0
-    for g in kids(client, cc, "groupname"):
+    groups = kids(client, cc, "groupname")
+    print(f"carcode has {len(groups)} groups")
+    for g in groups:
         if n >= 18:
             break
         gname = (g.get("jsn") or {}).get("groupname") or g.get("label")
-        for pt in kids(client, g, "parttype"):
+        children = kids(client, g)                     # ALL children, any nodetype
+        types = {}
+        for c in children:
+            types[c.get("nodetype")] = types.get(c.get("nodetype"), 0) + 1
+        print(f"  group {gname!r}: {len(children)} children {types}")
+        for pt in children:
             if n >= 18:
                 break
             try:
                 wire, dec, out, nl = leaf_wire(client, pt)
             except Exception as exc:  # noqa: BLE001
-                print("  leaf err:", exc); continue
+                print("    leaf err:", exc); continue
             if nl <= 0:
+                if dec > 0:
+                    print(f"    child nodetype={pt.get('nodetype')} frag={dec}b but 0 listings")
                 continue
             tot_wire += wire; tot_dec += dec; tot_out += out; tot_list += nl; n += 1
-            print(f"  leaf: {nl} listings  gzip={wire/1024:.1f}KB  decomp={dec/1024:.1f}KB  [{gname}]")
+            print(f"    LEAF: {nl} listings gzip={wire/1024:.1f}KB decomp={dec/1024:.1f}KB")
     if not n:
         print("!! no non-empty leaves measured"); return 1
     print(f"\nmeasured {n} non-empty leaves")
