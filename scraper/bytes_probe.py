@@ -59,26 +59,20 @@ def main() -> int:
     client = RAClient(ProxyManager())
     client.new_session()
     makes = [n for n in parsers.parse_nav(client.get(config.CATALOG_ROOT)) if n.get("nodetype") == "make"]
-    make = next((m for m in makes if "honda" in ((m.get("href") or "") + str(m.get("make") or "")).lower()), makes[0])
+    make = next((m for m in makes if "acura" in ((m.get("href") or "") + str(m.get("make") or "")).lower()), makes[0])
     print(f"make: {make.get('make')}")
 
-    # Target ONE established, parts-heavy carcode (Accord ~2012-2018) and measure up
-    # to 18 NON-EMPTY part-type leaves across its groups. Bounded so it fits the run.
+    # Jump DIRECTLY to year 2015 (established, parts-heavy) — no year-by-year walk.
+    years = kids(client, make, "year")
+    y = next((yy for yy in years if yy.get("year") == 2015), None) or years[len(years) // 2]
     target = None
-    for y in kids(client, make, "year"):
-        yr = y.get("year")
-        if not (yr and 2012 <= yr <= 2018):
-            continue
-        for mo in kids(client, y, "model"):
-            if "accord" in (str(mo.get("model") or "")).lower():
-                ccs = kids(client, mo, "carcode")
-                if ccs:
-                    target = (yr, mo, ccs[0])
-                    break
-        if target:
+    for mo in kids(client, y, "model"):        # one fetch returns all models
+        ccs = kids(client, mo, "carcode")
+        if ccs:
+            target = (y.get("year"), mo, ccs[0])
             break
     if not target:
-        print("!! no established Accord carcode found"); return 1
+        print("!! no carcode found for the chosen year"); return 1
     yr, mo, cc = target
     print(f"measuring on {mo.get('model')} {yr} carcode {cc.get('carcode')}\n")
 

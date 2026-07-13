@@ -33,7 +33,7 @@ jobs:
         env:
           SP_USE_PROXIES: "0"
           SP_SOLVE_CAPTCHA: "1"
-          SP_MIN_DELAY: "1.0"
-          SP_MAX_DELAY: "2.0"
+          SP_MIN_DELAY: "0.3"
+          SP_MAX_DELAY: "0.7"
           PROBE_CARCODE: ${{ github.event.inputs.carcode }}
         run: python scraper/${{ github.event.inputs.script }}.py
