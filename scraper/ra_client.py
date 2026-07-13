@@ -27,10 +27,12 @@ Only stdlib + `requests` are used. Import of ProxyManager is intentionally soft
 """
 from __future__ import annotations
 
+import gzip
 import json
 import os
 import random
 import re
+import threading
 import time
 from urllib.parse import parse_qs, urljoin, urlparse
 
@@ -60,6 +62,74 @@ class Blocked(Exception):
     The orchestrator treats this as recoverable: rotate the IP and re-enqueue the
     node. It is NOT a crawl-fatal error.
     """
+
+
+class BudgetExceeded(Exception):
+    """Raised when the crawl has transferred its byte budget — the HARD Evomi $
+    cap. Crawl-fatal by design: the run loop catches it and exits cleanly so the
+    residential-proxy bill can never run past the configured ceiling."""
+
+
+class _BudgetMeter:
+    """Thread-safe meter of billed proxy bytes with a hard stop.
+
+    Evomi bills gzipped WIRE bytes both ways. We approximate per request as
+    (compressed response) + (request out) + fixed TLS/header overhead, summed
+    across all worker threads. `spent` persists to a small state file so a
+    resumed / re-dispatched run keeps counting from where it left off and the
+    global cap holds across many 6h jobs. No cap set -> meter is a no-op.
+    """
+
+    def __init__(self) -> None:
+        self.max_bytes = 0
+        self.spent = 0
+        self._state = None
+        self._since_save = 0
+        self._lock = threading.Lock()
+
+    def configure(self, max_gb, state_path: str | None = None) -> None:
+        self.max_bytes = int(float(max_gb) * 1_000_000_000)
+        self._state = state_path or None
+        if self._state and os.path.exists(self._state):
+            try:
+                self.spent = int(open(self._state).read().strip() or "0")
+            except (OSError, ValueError):
+                self.spent = 0
+        print(f"[budget] cap={self.max_bytes/1e9:.2f}GB already_spent={self.spent/1e9:.3f}GB", flush=True)
+
+    def _persist(self) -> None:
+        if self._state:
+            try:
+                with open(self._state, "w") as fh:
+                    fh.write(str(self.spent))
+            except OSError:
+                pass
+
+    def record(self, resp, up_bytes: int) -> None:
+        if not self.max_bytes:
+            return
+        cl = resp.headers.get("Content-Length")
+        try:
+            down = int(cl) if cl and cl.isdigit() else len(gzip.compress(resp.content or b""))
+        except Exception:  # noqa: BLE001 - never let metering break a fetch
+            down = len(resp.content or b"")
+        billed = down + max(0, up_bytes) + 600      # + rough per-request TLS/header overhead
+        with self._lock:
+            self.spent += billed
+            self._since_save += billed
+            if self._since_save >= 5_000_000:       # checkpoint ~every 5 MB
+                self._persist()
+                self._since_save = 0
+            over = self.spent >= self.max_bytes
+        if over:
+            self._persist()
+            raise BudgetExceeded(
+                f"byte budget reached: {self.spent/1e9:.2f}GB >= {self.max_bytes/1e9:.2f}GB"
+            )
+
+
+# One meter shared by every RAClient/worker in the process.
+BUDGET = _BudgetMeter()
 
 
 # --- regexes (module-level so they compile once) --------------------------
@@ -307,7 +377,11 @@ class RAClient:
             url = config.BASE + url
         kw.setdefault("timeout", RATE["request_timeout_s"])
         kw.setdefault("allow_redirects", True)
-        return self._session.request(method, url, **kw)
+        resp = self._session.request(method, url, **kw)
+        # Meter billed proxy bytes; raises BudgetExceeded at the hard cap.
+        up = len(url) + len(str(kw.get("data") or kw.get("params") or "")) + 500
+        BUDGET.record(resp, up)
+        return resp
 
     # -- proxy pool helpers (duck-typed; tolerate a minimal fake) ----------
 

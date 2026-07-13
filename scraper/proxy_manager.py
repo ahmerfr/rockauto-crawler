@@ -315,6 +315,67 @@ class ProxyManager:
                 pass
 
 
+class EvomiProxyManager:
+    """Duck-typed drop-in for ProxyManager backed by ONE Evomi residential gateway.
+
+    Evomi rotates the exit IP per connection on the base username, so `get()`
+    always returns the same authenticated gateway URL and each new session lands
+    on a fresh residential IP — there is nothing to quarantine or refill. Creds
+    come from `.evomi.env` (gitignored): EVOMI_HOST/PORT/USER/PASS.
+    """
+
+    def __init__(self, env_path: str = ".evomi.env") -> None:
+        import urllib.parse
+        env = self._load(env_path)
+        need = ("EVOMI_HOST", "EVOMI_PORT", "EVOMI_USER", "EVOMI_PASS")
+        missing = [k for k in need if not env.get(k)]
+        if missing:
+            raise RuntimeError(f"{env_path}: missing {missing}")
+        # Evomi geo-targets via the PASSWORD: "<pass>_country-US". RockAuto shows
+        # inflated INTERNATIONAL prices to non-US IPs, so pin US or the catalog is
+        # wrong. Set EVOMI_COUNTRY="" only if you deliberately want global exits.
+        country = (os.getenv("EVOMI_COUNTRY") or env.get("EVOMI_COUNTRY") or "US").strip()
+        raw_pw = env["EVOMI_PASS"] + (f"_country-{country}" if country else "")
+        user = urllib.parse.quote(env["EVOMI_USER"], safe="")
+        pw = urllib.parse.quote(raw_pw, safe="")
+        self._url = f"http://{user}:{pw}@{env['EVOMI_HOST']}:{env['EVOMI_PORT']}"
+        self._host = env["EVOMI_HOST"]
+        self._country = country
+
+    @staticmethod
+    def _load(path: str) -> dict:
+        env: dict[str, str] = {}
+        try:
+            with open(path, encoding="utf-8") as fh:
+                for line in fh:
+                    s = line.strip()
+                    if s and not s.startswith("#") and "=" in s:
+                        k, v = s.split("=", 1)
+                        env[k.strip()] = v.split("#")[0].strip()
+        except OSError:
+            pass
+        # Env vars win (lets CI inject creds as secrets without a file).
+        for k in ("EVOMI_HOST", "EVOMI_PORT", "EVOMI_USER", "EVOMI_PASS"):
+            if os.getenv(k):
+                env[k] = os.environ[k]
+        return env
+
+    def get(self) -> str:            # same gateway; Evomi rotates IP per connection
+        return self._url
+
+    def report_bad(self, proxy: str) -> None:   # nothing to blacklist
+        pass
+
+    def report_ok(self, proxy: str) -> None:
+        pass
+
+    def quarantine(self, proxy: str, seconds: int) -> None:  # rotation is automatic
+        pass
+
+    def refill(self) -> int:
+        return 1
+
+
 # =========================================================================
 # OFFLINE self-test — no network, no live site. Prints PASS/FAIL.
 # Run: python scraper/proxy_manager.py

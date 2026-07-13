@@ -39,12 +39,12 @@ try:
     import crawl as C
     import images
     import parsers
-    from ra_client import RAClient, Blocked
+    from ra_client import RAClient, Blocked, BudgetExceeded, BUDGET
     from proxy_manager import ProxyManager
 except ImportError:  # pragma: no cover - package layout
     from scraper import config, images, parsers  # type: ignore
     from scraper import crawl as C  # type: ignore
-    from scraper.ra_client import RAClient, Blocked  # type: ignore
+    from scraper.ra_client import RAClient, Blocked, BudgetExceeded, BUDGET  # type: ignore
     from scraper.proxy_manager import ProxyManager  # type: ignore
 
 # Self-host thumbnails: the GitHub runner (unblocked) downloads each part photo so
@@ -196,12 +196,20 @@ def run(shard_index: int, shard_total: int, out_path: str,
              "images": 0, "skipped": 0, "capped": 0}
     img_root = os.path.join(os.path.dirname(out_path) or ".", "images")
 
-    proxies = ProxyManager()
-    if config.PROXY.get("enabled", True):
-        try:
-            proxies.refill()
-        except Exception as exc:  # noqa: BLE001
-            print(f"[proxy] refill skipped: {exc}", flush=True)
+    if os.getenv("SP_USE_EVOMI") == "1":
+        from proxy_manager import EvomiProxyManager
+        proxies = EvomiProxyManager()
+        print("[proxy] using Evomi residential gateway (rotating IPs)", flush=True)
+        if os.getenv("SP_MAX_GB"):
+            BUDGET.configure(os.getenv("SP_MAX_GB"),
+                             os.getenv("SP_BUDGET_STATE", "coverage/bytes_spent.txt"))
+    else:
+        proxies = ProxyManager()
+        if config.PROXY.get("enabled", True):
+            try:
+                proxies.refill()
+            except Exception as exc:  # noqa: BLE001
+                print(f"[proxy] refill skipped: {exc}", flush=True)
     client = RAClient(proxies)
 
     # Seed: explicit makes, else discover + shard the full catalog make list.
@@ -291,6 +299,12 @@ def run(shard_index: int, shard_total: int, out_path: str,
                 stats["captchas"] += 1
                 frontier.appendleft(node)  # retry later (not marked seen, so it re-pops)
                 continue
+            except BudgetExceeded:
+                exit_reason = "byte_budget"
+                frontier.append(node)      # unfinished — next dispatch resumes it
+                print(f"[stop] Evomi byte budget reached ({BUDGET.spent/1e9:.2f}GB) — clean exit",
+                      flush=True)
+                break
             except Exception as exc:  # noqa: BLE001 - never die on one node
                 print(f"[warn] node error: {exc}", flush=True)
                 seen_this_run.add(key)
