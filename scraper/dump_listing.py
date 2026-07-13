@@ -153,6 +153,18 @@ def main() -> int:
     leaf_html = client.get(leaf_url)
     soup = BeautifulSoup(leaf_html, "lxml")
 
+    # --- PARSER CHECK: does parse_listings capture RockAuto's style sub-groups
+    # (Beam (Standard) / Conventional / Winter ...) on this REAL leaf fragment? --
+    parsed = parsers.parse_listings(leaf_html, {"category_path": f"{args.group}>{args.parttype}"})
+    styles: dict = {}
+    for pl in parsed:
+        s = next((a["value"] for a in (pl.get("attributes") or []) if a.get("name") == "Style"), None)
+        styles[s] = styles.get(s, 0) + 1
+    print(f"[parser] parse_listings -> {len(parsed)} listings; style sub-groups captured:", flush=True)
+    for s, n in sorted(styles.items(), key=lambda kv: (kv[0] is None, -kv[1])):
+        print(f"    {n:>4}  {s!r}", flush=True)
+    print("", flush=True)
+
     # --- RAW SCAN: is the JS-rendered data (inventory tiers, extra photos) even
     # present in the server HTML, or fetched later by AJAX? -------------------
     if args.scan:
