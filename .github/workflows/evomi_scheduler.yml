@@ -1,0 +1,34 @@
+name: Evomi Crawl Scheduler
+
+# Autonomous driver for the byte-capped Evomi crawl. Every 6h it dispatches
+# crawl_evomi.yml on the crawl-loop-until-complete branch (where the Evomi code
+# lives), so the fleet keeps doing rounds until the 20 GB cap WITHOUT manual
+# re-dispatch. Safe by construction:
+#   * crawl_evomi.yml has a concurrency guard -> rounds never overlap / double-spend
+#   * the 20 GB byte cap + your 21 GB Evomi balance are the hard money stops
+#   * once the cap is hit each dispatched round caps instantly (0 Evomi spend)
+# Disable this workflow (or delete it) once the crawl is complete.
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch: {}        # manual trigger, for testing the dispatch chain
+
+permissions:
+  actions: write               # needed to start crawl_evomi.yml
+
+concurrency:
+  group: evomi-scheduler
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Kick off an Evomi crawl round (branch = where the code lives)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run crawl_evomi.yml \
+            --repo "${{ github.repository }}" \
+            --ref crawl-loop-until-complete
+          echo "dispatched crawl_evomi.yml (uses its default 20 GB budget)"
