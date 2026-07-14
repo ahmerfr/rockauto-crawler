@@ -1,0 +1,406 @@
+{
+ "total_veh": 64854,
+ "shards": [
+  {
+   "makes": [
+    "CHEVROLET"
+   ],
+   "veh": 6716
+  },
+  {
+   "makes": [
+    "FORD"
+   ],
+   "veh": 6364
+  },
+  {
+   "makes": [
+    "GMC"
+   ],
+   "veh": 3752
+  },
+  {
+   "makes": [
+    "DODGE"
+   ],
+   "veh": 3497
+  },
+  {
+   "makes": [
+    "INTERNATIONAL"
+   ],
+   "veh": 2952
+  },
+  {
+   "makes": [
+    "MERCEDES-BENZ",
+    "SIATA",
+    "SMART",
+    "ELCAR",
+    "FAIRTHORPE",
+    "ALVIS",
+    "DKW",
+    "DUESENBERG",
+    "STEVENS-DURYEA",
+    "DUAL-GHIA",
+    "AMPHICAR",
+    "VAUXHALL",
+    "OMODA",
+    "ZEEKR",
+    "ROLLIN",
+    "MARQUETTE"
+   ],
+   "veh": 2772
+  },
+  {
+   "makes": [
+    "FREIGHTLINER",
+    "AUSTIN",
+    "KENWORTH",
+    "MCLAREN",
+    "WOLSELEY",
+    "ISO",
+    "EXCALIBUR",
+    "ELVA",
+    "BYD",
+    "DU PONT",
+    "MESSERSCHMITT",
+    "PANHARD",
+    "ASUNA",
+    "SALMSON",
+    "GRIFFITH",
+    "CHANDLER",
+    "ARNOLT-MG",
+    "ARRA"
+   ],
+   "veh": 2772
+  },
+  {
+   "makes": [
+    "BMW",
+    "LAND ROVER",
+    "ROLLS-ROYCE",
+    "MACK",
+    "JAC",
+    "SIMCA",
+    "PIERCE-ARROW",
+    "RILEY",
+    "BAIC",
+    "FRANKLIN",
+    "ROAMER",
+    "ESSEX",
+    "CLEVELAND",
+    "LEA-FRANCIS",
+    "AMERICAN BANTAM",
+    "LEXINGTON",
+    "APPERSON",
+    "JIM",
+    "SRT",
+    "SSANGYONG"
+   ],
+   "veh": 2772
+  },
+  {
+   "makes": [
+    "PONTIAC",
+    "FERRARI",
+    "INFINITI",
+    "NASH",
+    "CITROEN",
+    "TVR",
+    "BRISTOL",
+    "GLAS",
+    "ARMSTRONG-SIDDELEY",
+    "DELLOW",
+    "ARNOLT-BRISTOL",
+    "SPYKER",
+    "BIZZARRINI",
+    "AM GENERAL",
+    "LUCID",
+    "MERKUR",
+    "PANTHER",
+    "DELOREAN",
+    "ROOSEVELT",
+    "DE VAUX"
+   ],
+   "veh": 2772
+  },
+  {
+   "makes": [
+    "VOLKSWAGEN",
+    "ISUZU",
+    "HINO",
+    "MG",
+    "STERLING",
+    "EAGLE",
+    "STUTZ",
+    "IVECO",
+    "MARMON",
+    "MOON",
+    "MONTEVERDI",
+    "OSCA",
+    "DAIHATSU",
+    "FLINT",
+    "DFSK",
+    "MARAUDER",
+    "GOLIATH",
+    "STEARNS KNIGHT",
+    "NARDI",
+    "LORDSTOWN MOTORS"
+   ],
+   "veh": 2772
+  },
+  {
+   "makes": [
+    "JEEP",
+    "JAGUAR",
+    "BENTLEY",
+    "CHECKER",
+    "AUBURN",
+    "NSU",
+    "TESLA",
+    "REO",
+    "TURNER",
+    "JORDAN",
+    "LAFORZA",
+    "GRAHAM-PAIGE",
+    "POLESTAR",
+    "SABRA",
+    "CORD",
+    "JEWETT",
+    "BLACKHAWK",
+    "VESPA",
+    "DAVIS"
+   ],
+   "veh": 2771
+  },
+  {
+   "makes": [
+    "TOYOTA",
+    "KIA",
+    "MASERATI",
+    "UD",
+    "WILLYS",
+    "HUPMOBILE",
+    "HILLMAN",
+    "FACEL VEGA",
+    "MORETTI",
+    "RIVIAN",
+    "ALPINE",
+    "YUGO",
+    "GEELY",
+    "GIANT MOTORS",
+    "YELLOW CAB",
+    "ALLSTATE",
+    "CONTINENTAL",
+    "ERSKINE",
+    "VIKING"
+   ],
+   "veh": 2771
+  },
+  {
+   "makes": [
+    "PLYMOUTH",
+    "SUBARU",
+    "RAM",
+    "MITSUBISHI FUSO",
+    "PACKARD",
+    "VAM",
+    "LADA",
+    "KAISER-FRAZER",
+    "DAF",
+    "CHANGAN",
+    "EDSEL",
+    "MAXWELL",
+    "MAICO",
+    "KISSEL",
+    "GORDON-KEEBLE",
+    "HCS",
+    "SOUEAST",
+    "SEV",
+    "QVALE"
+   ],
+   "veh": 2771
+  },
+  {
+   "makes": [
+    "NISSAN",
+    "LEXUS",
+    "FIAT",
+    "LOTUS",
+    "HUDSON",
+    "DAIMLER",
+    "SKODA",
+    "RELIANT",
+    "DATSUN",
+    "DELAGE",
+    "DETOMASO",
+    "DAEWOO",
+    "LAGONDA",
+    "GWM",
+    "DEUTSCH-BONNET",
+    "UAZ",
+    "SALEEN",
+    "ZUNDAPP",
+    "OMEGA"
+   ],
+   "veh": 2771
+  },
+  {
+   "makes": [
+    "BUICK",
+    "HONDA",
+    "AMERICAN MOTORS",
+    "SUZUKI",
+    "MINI",
+    "GENESIS",
+    "BORGWARD",
+    "SCION",
+    "FOTON",
+    "FRAZER NASH",
+    "PEGASO",
+    "STANDARD",
+    "HEALEY",
+    "KARMA",
+    "JOWETT",
+    "PASSPORT",
+    "JMC",
+    "INEOS",
+    "HERTZ",
+    "MASTRETTA",
+    "SERES"
+   ],
+   "veh": 2772
+  },
+  {
+   "makes": [
+    "MERCURY",
+    "PORSCHE",
+    "LINCOLN",
+    "SEAT",
+    "PETERBILT",
+    "ALLARD",
+    "ABARTH",
+    "GEO",
+    "CROSLEY",
+    "AVANTI",
+    "DURANT",
+    "HRG",
+    "VINFAST",
+    "BERKELEY",
+    "UTILIMASTER",
+    "WINDSOR",
+    "CISITALIA",
+    "DIANA",
+    "FISKER",
+    "SWALLOW",
+    "VPG"
+   ],
+   "veh": 2772
+  },
+  {
+   "makes": [
+    "AUDI",
+    "HYUNDAI",
+    "RENAULT",
+    "ALFA ROMEO",
+    "SATURN",
+    "MORRIS",
+    "HUMBER",
+    "HUMMER",
+    "BUGATTI",
+    "MAYBACH",
+    "SINGER",
+    "LASALLE",
+    "MATRA",
+    "PANOZ",
+    "STAR",
+    "BOND",
+    "AMERICAN AUSTIN",
+    "APOLLO",
+    "BRICKLIN",
+    "FALCON KNIGHT",
+    "BESTUNE"
+   ],
+   "veh": 2772
+  },
+  {
+   "makes": [
+    "CHRYSLER",
+    "MITSUBISHI",
+    "PEUGEOT",
+    "ASTON MARTIN",
+    "LAMBORGHINI",
+    "OPEL",
+    "ROVER",
+    "AC",
+    "AUSTIN-HEALEY",
+    "CASE",
+    "GARDNER",
+    "TATRA",
+    "MOSKVICH",
+    "HENRY J",
+    "MULLEN",
+    "MARATHON",
+    "LANCHESTER",
+    "JETOUR",
+    "ROCKNE",
+    "WHIPPET",
+    "JAECOO"
+   ],
+   "veh": 2771
+  },
+  {
+   "makes": [
+    "OLDSMOBILE",
+    "MAZDA",
+    "FARGO",
+    "SAAB",
+    "MORGAN",
+    "LANCIA",
+    "SUNBEAM",
+    "GRAHAM",
+    "LOCOMOBILE",
+    "DELAHAYE",
+    "PAIGE",
+    "COLE",
+    "CUNNINGHAM",
+    "WARTBURG",
+    "TALBOT-LAGO",
+    "GAC",
+    "RICKENBACKER",
+    "HISPANO-SUIZA",
+    "MARCOS",
+    "KURTIS",
+    "THINK"
+   ],
+   "veh": 2771
+  },
+  {
+   "makes": [
+    "CADILLAC",
+    "VOLVO",
+    "STUDEBAKER",
+    "ACURA",
+    "WORKHORSE",
+    "TRIUMPH",
+    "DESOTO",
+    "OAKLAND",
+    "JENSEN",
+    "PEERLESS",
+    "SHELBY",
+    "CHIREY",
+    "CUPRA",
+    "ZACUA",
+    "FAW",
+    "DENZEL",
+    "MOBILITY VENTURES",
+    "HOTCHKISS",
+    "HAYNES",
+    "DORETTI",
+    "HAVAL"
+   ],
+   "veh": 2771
+  }
+ ]
+}
