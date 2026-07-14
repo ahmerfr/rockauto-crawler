@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from collections import deque
@@ -139,6 +140,28 @@ def process(client, node: dict, tree_only: bool = False) -> tuple[list[dict], li
     jsn = payload.get("jsn")
     ntype = node.get("node_type")
 
+    # LEAF (parttype listings): prefer the compact catalogapi `navnode_fetch` fragment
+    # (~half the bytes of the full page, same parts — verified). Needs the node jsn +
+    # the vehicle's max_group_index (threaded down from the carcode page). Fall back to
+    # the full page only when the fragment errors or yields nothing.
+    if ntype in C.LEAF_TYPES:
+        ctx = C.listing_ctx(payload)
+        if href and not ctx.get("source_url"):
+            ctx["source_url"] = (config.BASE.rstrip("/") + href
+                                 if href.startswith("/") else href)
+        mgi = payload.get("mgi")
+        listings = []
+        if jsn is not None and mgi is not None:
+            try:
+                frag = client.fetch_listings(jsn, int(mgi))
+                listings = parsers.parse_listings(frag, ctx)
+            except Exception:  # noqa: BLE001
+                listings = []
+        if not listings:   # fragment errored/empty -> confirm via full page
+            html = client.get(href) if href else client.fetch_children(jsn)
+            listings = parsers.parse_listings(html, ctx)
+        return listings, []
+
     if href:
         html = client.get(href)
     elif jsn:
@@ -146,15 +169,11 @@ def process(client, node: dict, tree_only: bool = False) -> tuple[list[dict], li
     else:
         raise ValueError("node has neither href nor jsn")
 
-    if ntype in C.LEAF_TYPES:
-        ctx = C.listing_ctx(payload)
-        # Record where each listing came from — listing_ctx carries no href, so every
-        # scraped part had source_url = NULL and was untraceable back to RockAuto.
-        if href and not ctx.get("source_url"):
-            ctx["source_url"] = (config.BASE.rstrip("/") + href
-                                 if href.startswith("/") else href)
-        listings = parsers.parse_listings(html, ctx)
-        return listings, []
+    # The vehicle/carcode page carries max_group_index; thread it to descendants so
+    # their parttype leaves can use the compact fragment endpoint. Inherit when a
+    # level (e.g. a nav fragment) doesn't restate it.
+    m = re.search(r'id="max_group_index"[^>]*value="(\d+)"', html)
+    mgi = m.group(1) if m else payload.get("mgi")
 
     children = parsers.parse_nav(html)
     rows, kids = [], []
@@ -164,10 +183,13 @@ def process(client, node: dict, tree_only: bool = False) -> tuple[list[dict], li
         if tree_only and child.get("nodetype") == "carcode":
             rows.append(_vehicle_record(child))   # emit vehicle, don't descend
             continue
+        cp = C.build_child_payload(child, payload)
+        if mgi is not None:
+            cp["mgi"] = mgi
         kids.append({
             "node_type": child.get("nodetype", "node"),
             "href": child.get("href"),
-            "payload": C.build_child_payload(child, payload),
+            "payload": cp,
         })
     return rows, kids
 
