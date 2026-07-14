@@ -329,6 +329,58 @@ class RAClient:
             f"fetch_children({jsn.get('nodetype')}) blocked after {attempts} attempts ({last_err})"
         )
 
+    def fetch_listings(self, jsn: dict, max_group_index: int = 0) -> str:
+        """Fetch a parttype node's LISTINGS via the catalogapi navnode_fetch XHR —
+        the compact fragment RockAuto's own UI uses, without the full-page chrome.
+
+        Payload shape mirrors the site JS exactly: func=navnode_fetch with
+        payload = json({"jsn": <node jsn>, "max_group_index": N}). Returns the
+        listing HTML fragment (from html_fill_sections), or "" if none.
+        """
+        if self._session is None:
+            self.new_session()
+        attempts = int(RATE["max_attempts"])
+        last_err = None
+        for attempt in range(attempts):
+            self._sleep_polite(attempt)
+            payload = {"jsn": jsn, "max_group_index": int(max_group_index)}
+            body = {
+                "func": "navnode_fetch",
+                "payload": json.dumps(payload, separators=(",", ":")),
+                "api_json_request": "1",
+                "sctchecked": "1",
+                "scbeenloaded": "false",
+                "curCartGroupID": "",
+            }
+            if self._nck:
+                body["_nck"] = self._nck
+            try:
+                resp = self._send("POST", CATALOG_API, data=body, headers=self._api_headers())
+            except RequestException as exc:
+                last_err = f"{type(exc).__name__}: {exc}"
+                self.rotate()
+                continue
+            if self._is_captcha(resp):
+                last_err = "captcha on navnode_fetch"
+                if not self._try_solve_captcha(resp):
+                    self.rotate()
+                continue
+            try:
+                data = resp.json()
+            except ValueError:
+                if self._is_captcha_body(resp.text):
+                    self.rotate()
+                else:
+                    last_err = "non-JSON navnode_fetch response"
+                continue
+            self._absorb_nonce(data)
+            if self._nonce_stale(data):
+                self._refresh_nck()
+                continue
+            frag = self._extract_catalog_fragment(data)
+            return frag if frag is not None else ""
+        raise Blocked(f"fetch_listings blocked after {attempts} attempts ({last_err})")
+
     def rotate(self) -> None:
         """Quarantine the current proxy (captcha cool-down) and start fresh."""
         self._quarantine_current()
