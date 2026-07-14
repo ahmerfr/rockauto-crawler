@@ -87,7 +87,8 @@ jobs:
           EVOMI_USER: ${{ secrets.EVOMI_USER }}
           EVOMI_PASS: ${{ secrets.EVOMI_PASS }}
           EVOMI_COUNTRY: "US"        # RockAuto shows correct US prices only to US IPs
-          SP_SOLVE_CAPTCHA: "1"      # OCR-solve any incidental securimage wall
+          SP_SOLVE_CAPTCHA: "0"      # NO captcha-solving: rely on Evomi's fresh rotating IPs
+                                     # (each IP does few reqs, so the ~200/IP wall rarely trips)
           SP_MIN_DELAY: ${{ github.event.inputs.min_delay || '0.3' }}
           SP_MAX_DELAY: ${{ github.event.inputs.max_delay || '0.8' }}
           SP_YEAR_MIN: "1900"
