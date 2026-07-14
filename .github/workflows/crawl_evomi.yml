@@ -24,6 +24,9 @@ on:
       priority_makes:
         description: "Optional comma-separated makes to crawl first (e.g. big US brands)."
         default: ""
+      mode:
+        description: "full = crawl part listings; tree = enumerate vehicles only (cheap sizing pass)"
+        default: "full"
   # Autonomous rounds: fire every 6h. The concurrency guard means a new round
   # QUEUES behind a running one — never overlaps, never double-spends. Harmless
   # after the byte cap (each run then caps instantly with 0 Evomi spend).
@@ -97,15 +100,17 @@ jobs:
           VISITED_OUT: artifacts/visited-${{ matrix.index }}.txt
         run: |
           mkdir -p coverage artifacts
-          TOTAL="${{ github.event.inputs.total_gb || '14.5' }}"
+          TOTAL="${{ github.event.inputs.total_gb || '20' }}"
+          MODE="${{ github.event.inputs.mode || 'full' }}"
           SHARD_GB=$(python -c "print(f'{$TOTAL/${{ env.SHARD_TOTAL }}:.4f}')")
-          echo "shard ${{ matrix.index }} byte cap = ${SHARD_GB} GB (of ${TOTAL} GB total / ${{ env.SHARD_TOTAL }} shards)"
+          EXTRA=""; [ "$MODE" = "tree" ] && EXTRA="--tree-only"
+          echo "mode=$MODE  shard ${{ matrix.index }} byte cap = ${SHARD_GB} GB (of ${TOTAL} GB / ${{ env.SHARD_TOTAL }} shards)"
           SP_MAX_GB="$SHARD_GB" python scraper/crawl_jsonl.py \
             --shard-index "${{ matrix.index }}" \
             --shard-total "${{ env.SHARD_TOTAL }}" \
             --out "artifacts/shard-${{ matrix.index }}.ndjson" \
             --budget 5000000 \
-            --max-seconds 19000
+            --max-seconds 19000 $EXTRA
 
       - name: Upload shard artifact (NDJSON + new-leaves list)
         if: always()
