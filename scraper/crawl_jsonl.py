@@ -188,7 +188,8 @@ def run(shard_index: int, shard_total: int, out_path: str,
         makes_override: list[str] | None = None,
         budget: int = 400, max_seconds: int = 18000,
         visited_file: str | None = None, visited_out: str | None = None,
-        tree_only: bool = False, priority: list[str] | None = None) -> dict:
+        tree_only: bool = False, priority: list[str] | None = None,
+        only_makes: list[str] | None = None) -> dict:
     """Crawl this shard, writing Listing rows (or vehicle rows in tree_only) as
     NDJSON to `out_path`."""
     started = time.monotonic()
@@ -226,8 +227,16 @@ def run(shard_index: int, shard_total: int, out_path: str,
             seeds = make_seed_nodes([{"make": m, "href": C.seed_href(m)} for m in makes_override])
         else:
             all_makes = discover_makes(client)
-            mine = shard(all_makes, shard_index, shard_total)
-            print(f"[shard] {shard_index}/{shard_total}: {len(mine)}/{len(all_makes)} makes", flush=True)
+            if only_makes:
+                # Balanced plan: keep only this shard's assigned makes, matched by
+                # name against RockAuto's OWN discovered nodes (so we reuse their
+                # exact hrefs — no name->URL reconstruction to get wrong).
+                want = {m.strip().lower() for m in only_makes}
+                mine = [n for n in all_makes if (n.get("make") or "").strip().lower() in want]
+                print(f"[plan] {len(mine)}/{len(all_makes)} makes for this shard", flush=True)
+            else:
+                mine = shard(all_makes, shard_index, shard_total)
+                print(f"[shard] {shard_index}/{shard_total}: {len(mine)}/{len(all_makes)} makes", flush=True)
             seeds = make_seed_nodes(mine)
     except BudgetExceeded:
         print("[stop] byte budget already reached before crawling (resumed at/over cap) — clean exit", flush=True)
@@ -408,6 +417,9 @@ def _parse_args(argv=None):
                    help="enumerate every vehicle (one row per carcode) WITHOUT crawling leaf listings")
     p.add_argument("--priority-makes", default=os.getenv("PRIORITY_MAKES"),
                    help="comma list of makes to crawl FIRST (before the alpha tail)")
+    p.add_argument("--only-makes", default=os.getenv("SHARD_MAKES"),
+                   help="comma list: crawl ONLY these makes (balanced-plan shard); "
+                        "filters RockAuto's discovered makes so their exact hrefs are reused")
     p.add_argument("--selftest", action="store_true")
     return p.parse_args(argv)
 
@@ -489,9 +501,11 @@ def main(argv=None) -> int:
     makes = [m.strip().lower() for m in args.makes.split(",")] if args.makes else None
     priority = ([m.strip().lower() for m in args.priority_makes.split(",") if m.strip()]
                 if args.priority_makes else None)
+    only = ([m.strip().lower() for m in args.only_makes.split(",") if m.strip()]
+            if args.only_makes else None)
     run(args.shard_index, args.shard_total, args.out, makes, args.budget, args.max_seconds,
         visited_file=args.visited_file, visited_out=args.visited_out,
-        tree_only=args.tree_only, priority=priority)
+        tree_only=args.tree_only, priority=priority, only_makes=only)
     return 0
 
 
