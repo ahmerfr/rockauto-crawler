@@ -14,8 +14,8 @@ on:
   workflow_dispatch:
     inputs:
       total_gb:
-        description: "TOTAL byte budget across all shards (GB). 14.5 ≈ $17. Split evenly over 20 shards."
-        default: "14.5"
+        description: "TOTAL byte budget across all shards (GB). 20 ≈ $23. Split evenly over 20 shards."
+        default: "20"
       min_delay:
         description: "Min politeness delay per request (s). Evomi rotates IPs so this can be small."
         default: "0.3"
@@ -24,6 +24,16 @@ on:
       priority_makes:
         description: "Optional comma-separated makes to crawl first (e.g. big US brands)."
         default: ""
+  # Autonomous rounds: fire every 6h. The concurrency guard means a new round
+  # QUEUES behind a running one — never overlaps, never double-spends. Harmless
+  # after the byte cap (each run then caps instantly with 0 Evomi spend).
+  schedule:
+    - cron: "0 */6 * * *"
+
+# Only ONE Evomi crawl may run at a time — the money-safety guard for the cron.
+concurrency:
+  group: evomi-crawl
+  cancel-in-progress: false
 
 env:
   SHARD_TOTAL: "20"
