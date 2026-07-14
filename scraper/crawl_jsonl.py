@@ -217,13 +217,22 @@ def run(shard_index: int, shard_total: int, out_path: str,
     rotate_every = int(os.getenv("SP_ROTATE_EVERY") or (80 if os.getenv("SP_USE_EVOMI") == "1" else 0))
 
     # Seed: explicit makes, else discover + shard the full catalog make list.
-    if makes_override:
-        seeds = make_seed_nodes([{"make": m, "href": C.seed_href(m)} for m in makes_override])
-    else:
-        all_makes = discover_makes(client)
-        mine = shard(all_makes, shard_index, shard_total)
-        print(f"[shard] {shard_index}/{shard_total}: {len(mine)}/{len(all_makes)} makes", flush=True)
-        seeds = make_seed_nodes(mine)
+    # The byte cap can trip during this warm-up/discovery (e.g. a resumed shard
+    # whose persisted counter already meets the cap) — catch it so the shard exits
+    # cleanly (0 new work) instead of crashing the job.
+    pre_exhausted = False
+    try:
+        if makes_override:
+            seeds = make_seed_nodes([{"make": m, "href": C.seed_href(m)} for m in makes_override])
+        else:
+            all_makes = discover_makes(client)
+            mine = shard(all_makes, shard_index, shard_total)
+            print(f"[shard] {shard_index}/{shard_total}: {len(mine)}/{len(all_makes)} makes", flush=True)
+            seeds = make_seed_nodes(mine)
+    except BudgetExceeded:
+        print("[stop] byte budget already reached before crawling (resumed at/over cap) — clean exit", flush=True)
+        seeds = []
+        pre_exhausted = True
 
     seeds = order_seeds(seeds, priority)
     if priority:
@@ -244,7 +253,7 @@ def run(shard_index: int, shard_total: int, out_path: str,
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
 
-    exit_reason = "drained"   # stays 'drained' iff the frontier empties naturally
+    exit_reason = "byte_budget" if pre_exhausted else "drained"   # 'drained' iff the frontier empties naturally
     with open(out_path, "w", encoding="utf-8") as out:
         while frontier:
             if stats["requests"] >= budget:
