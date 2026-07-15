@@ -29,25 +29,19 @@ jobs:
       # rotation WITHOUT captcha-solving? If yes -> the full 146GB catalog is ~$44 at
       # ~$0.30/GB. Set the SP_PROXY_URL secret to your Webshare/Rayobyte rotating
       # endpoint (http://user:pass@host:port) before running.
-      - name: Datacenter-proxy GO/NO-GO smoke (ACURA, fragment path, NO captcha-solve)
+      - name: Direct-Azure fragment smoke (ACURA, NO proxy, NO captcha-solve)
         env:
-          SP_PROXY_URL: ${{ secrets.SP_PROXY_URL }}
           SP_USE_EVOMI: "0"
+          SP_USE_PROXIES: "0"
           SP_SOLVE_CAPTCHA: "0"
           SP_DOWNLOAD_IMAGES: "0"
           SP_MIN_DELAY: "0.3"
           SP_MAX_DELAY: "0.7"
-          SP_ROTATE_EVERY: "60"
           SP_YEAR_MIN: "2008"
           SP_YEAR_MAX: "2012"
           SP_BUDGET_STATE: coverage/dc_bytes.txt
         run: |
-          if [ -z "$SP_PROXY_URL" ]; then
-            echo "!! No SP_PROXY_URL secret set. Add your datacenter-proxy rotating URL as repo secret SP_PROXY_URL, then re-run."; exit 1; fi
           mkdir -p coverage artifacts
-          echo "=== exit IP THROUGH the datacenter proxy (need country=US for correct prices) ==="
-          curl -s --proxy "$SP_PROXY_URL" --max-time 25 https://ipinfo.io/json || echo "GEO: proxy request failed"
-          echo
           SP_MAX_GB="0.3" python scraper/crawl_jsonl.py --only-makes acura \
             --out artifacts/dc_smoke.ndjson --budget 260 --max-seconds 800 || true
           python - <<'PY'
