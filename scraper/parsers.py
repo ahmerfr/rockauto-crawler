@@ -766,12 +766,16 @@ def parse_listings(html: str, ctx: dict) -> list[dict]:
             # vew_partnumber[8]); its price, core charge and photo sit in SEPARATE
             # cells under that same index, NOT inside the part's text container.
             # Resolve the index once and pull those index-keyed fields.
+            # Index may be a resolved number ("8") on full pages OR a RockAuto
+            # "__GIP__2__" placeholder in the compact navnode_fetch fragment — accept
+            # either, or the fragment's price/core/image cells (keyed by this index)
+            # are never found and every fragment part comes back priced=None.
             idx = None
-            m_idx = re.search(r"\[(\d+)\]", (pn_el.get("id") if pn_el else "") or "")
+            m_idx = re.search(r"\[([^\]]+)\]", (pn_el.get("id") if pn_el else "") or "")
             if not m_idx:
-                lc = anchor.find_parent(id=re.compile(r"listingcontainer\[\d+\]"))
+                lc = anchor.find_parent(id=re.compile(r"listingcontainer\[[^\]]+\]"))
                 if lc:
-                    m_idx = re.search(r"\[(\d+)\]", lc.get("id", "") or "")
+                    m_idx = re.search(r"\[([^\]]+)\]", lc.get("id", "") or "")
             if m_idx:
                 idx = m_idx.group(1)
 
