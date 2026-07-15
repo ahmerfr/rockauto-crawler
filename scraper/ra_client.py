@@ -34,6 +34,7 @@ import random
 import re
 import threading
 import time
+import urllib.parse
 from urllib.parse import parse_qs, urljoin, urlparse
 
 import requests
@@ -314,6 +315,11 @@ class RAClient:
             }
             if self._nck:
                 body["_nck"] = self._nck
+                # Real browsers also send the URL-encoded token as _jnck (RockAuto's
+                # GetSerializedCookieData); include it so catalogapi requests look
+                # well-formed and trip the anti-bot heuristic less often. Avoidance,
+                # not a CAPTCHA solve.
+                body["_jnck"] = urllib.parse.quote(self._nck, safe="")
             try:
                 resp = self._send(
                     "POST", CATALOG_API, data=body, headers=self._api_headers()
@@ -377,6 +383,11 @@ class RAClient:
             }
             if self._nck:
                 body["_nck"] = self._nck
+                # Real browsers also send the URL-encoded token as _jnck (RockAuto's
+                # GetSerializedCookieData); include it so catalogapi requests look
+                # well-formed and trip the anti-bot heuristic less often. Avoidance,
+                # not a CAPTCHA solve.
+                body["_jnck"] = urllib.parse.quote(self._nck, safe="")
             try:
                 resp = self._send("POST", CATALOG_API, data=body, headers=self._api_headers())
             except RequestException as exc:
@@ -425,6 +436,11 @@ class RAClient:
             }
             if self._nck:
                 body["_nck"] = self._nck
+                # Real browsers also send the URL-encoded token as _jnck (RockAuto's
+                # GetSerializedCookieData); include it so catalogapi requests look
+                # well-formed and trip the anti-bot heuristic less often. Avoidance,
+                # not a CAPTCHA solve.
+                body["_jnck"] = urllib.parse.quote(self._nck, safe="")
             try:
                 resp = self._send("POST", CATALOG_API, data=body, headers=self._api_headers())
             except RequestException as exc:
