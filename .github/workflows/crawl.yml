@@ -54,10 +54,12 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install tesseract OCR + Python deps
+      # No tesseract: we NEVER solve CAPTCHAs. Free-IP coverage works by rotating
+      # to a fresh GitHub runner IP (a new job) when one IP hits RockAuto's wall —
+      # CAPTCHA AVOIDANCE, not solving. Dropping the apt install also shaves ~30s of
+      # per-job setup, which matters when jobs are short (abort at the IP's wall).
+      - name: Install Python deps
         run: |
-          sudo apt-get update
-          sudo apt-get install -y tesseract-ocr
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
@@ -75,8 +77,8 @@ jobs:
       - name: Crawl shard ${{ matrix.index }}
         env:
           SP_USE_PROXIES: "0"        # each runner already has its own fresh IP
-          SP_SOLVE_CAPTCHA: "1"      # OCR-solve securimage walls locally
-          SP_MIN_DELAY: "1.2"        # tighter (fresh GitHub IPs tolerate it); abort logic covers blocks
+          SP_SOLVE_CAPTCHA: "0"      # NEVER solve CAPTCHAs — rotate to a fresh runner IP instead
+          SP_MIN_DELAY: "1.2"        # politeness stretches per-IP survival before the wall
           SP_MAX_DELAY: "2.8"
           SP_YEAR_MIN: "1900"        # widen from default 2010 -> ALL years RockAuto lists
           SP_YEAR_MAX: "2035"        # ceiling past any real model-year (RockAuto lists next-year models early)
