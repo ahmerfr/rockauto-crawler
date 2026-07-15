@@ -376,6 +376,36 @@ class EvomiProxyManager:
         return 1
 
 
+class GatewayProxyManager:
+    """Duck-typed drop-in for ANY single rotating-proxy gateway — Webshare / Rayobyte
+    datacenter, or any provider that rotates the exit IP per connection on one
+    authenticated endpoint. Reads the full proxy URL from SP_PROXY_URL, e.g.
+    ``http://user:pass@p.webshare.io:80``. Like the Evomi gateway there is nothing to
+    quarantine or refill — the provider rotates IPs itself, so `get()` always returns
+    the same endpoint and each connection lands on a fresh IP."""
+
+    def __init__(self, url: str | None = None) -> None:
+        raw = (url or os.getenv("SP_PROXY_URL") or "").strip()
+        if not raw:
+            raise RuntimeError("SP_PROXY_URL not set (expected http://user:pass@host:port)")
+        self._url = raw if "://" in raw else "http://" + raw
+
+    def get(self) -> str:            # same gateway; provider rotates IP per connection
+        return self._url
+
+    def report_bad(self, proxy: str) -> None:
+        pass
+
+    def report_ok(self, proxy: str) -> None:
+        pass
+
+    def quarantine(self, proxy: str, seconds: int) -> None:
+        pass
+
+    def refill(self) -> int:
+        return 1
+
+
 # =========================================================================
 # OFFLINE self-test — no network, no live site. Prints PASS/FAIL.
 # Run: python scraper/proxy_manager.py

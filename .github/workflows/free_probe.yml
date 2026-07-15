@@ -24,41 +24,46 @@ jobs:
           sudo apt-get update && sudo apt-get install -y tesseract-ocr
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      - name: Runner IP + country (must be US for correct prices)
-        run: curl -s https://ipinfo.io/json || true
-      # THE $30 QUESTION: is the catalogapi.php listing fragment <= 2KB gzipped?
-      # 12.7M leaf pages * 2KB = 26GB = ~$30 on Evomi. At today's 16KB full page it
-      # is 208GB = $239. Byte size is IP-independent, but our local IP is blocked, so
-      # this measures from the free US runner.
-      - name: Smoke the wired fragment crawl (direct US, NO captcha-solve)
+      # DATACENTER-PROXY GO/NO-GO: does a cheap rotating DC proxy (a) exit in the US
+      # (so RockAuto shows correct US prices) and (b) survive the ~200-req/IP wall via
+      # rotation WITHOUT captcha-solving? If yes -> the full 146GB catalog is ~$44 at
+      # ~$0.30/GB. Set the SP_PROXY_URL secret to your Webshare/Rayobyte rotating
+      # endpoint (http://user:pass@host:port) before running.
+      - name: Datacenter-proxy GO/NO-GO smoke (ACURA, fragment path, NO captcha-solve)
         env:
+          SP_PROXY_URL: ${{ secrets.SP_PROXY_URL }}
           SP_USE_EVOMI: "0"
-          SP_USE_PROXIES: "0"
           SP_SOLVE_CAPTCHA: "0"
           SP_DOWNLOAD_IMAGES: "0"
-          SP_MIN_DELAY: "0.4"
-          SP_MAX_DELAY: "0.8"
+          SP_MIN_DELAY: "0.3"
+          SP_MAX_DELAY: "0.7"
+          SP_ROTATE_EVERY: "60"
           SP_YEAR_MIN: "2008"
           SP_YEAR_MAX: "2012"
-          SP_BUDGET_STATE: coverage/smoke_bytes.txt
+          SP_BUDGET_STATE: coverage/dc_bytes.txt
         run: |
+          if [ -z "$SP_PROXY_URL" ]; then
+            echo "!! No SP_PROXY_URL secret set. Add your datacenter-proxy rotating URL as repo secret SP_PROXY_URL, then re-run."; exit 1; fi
           mkdir -p coverage artifacts
+          echo "=== exit IP THROUGH the datacenter proxy (need country=US for correct prices) ==="
+          curl -s --proxy "$SP_PROXY_URL" --max-time 25 https://ipinfo.io/json || echo "GEO: proxy request failed"
+          echo
           SP_MAX_GB="0.3" python scraper/crawl_jsonl.py --only-makes acura \
-            --out artifacts/smoke.ndjson --budget 220 --max-seconds 600 || true
+            --out artifacts/dc_smoke.ndjson --budget 260 --max-seconds 800 || true
           python - <<'PY'
           import json, os
           rows=[]
-          if os.path.exists("artifacts/smoke.ndjson"):
-              rows=[json.loads(l) for l in open("artifacts/smoke.ndjson",encoding="utf-8")]
+          if os.path.exists("artifacts/dc_smoke.ndjson"):
+              rows=[json.loads(l) for l in open("artifacts/dc_smoke.ndjson",encoding="utf-8")]
           leaves=set(); priced=0
           for r in rows:
               leaves.add(r.get("source_url") or (r.get("category_path"),r.get("model_name")))
               if r.get("price") is not None: priced+=1
-          b=open("coverage/smoke_bytes.txt").read().strip() if os.path.exists("coverage/smoke_bytes.txt") else "0"
+          b=open("coverage/dc_bytes.txt").read().strip() if os.path.exists("coverage/dc_bytes.txt") else "0"
           spent=int(b) if b.isdigit() else 0
           print(f"RESULT listings={len(rows)} leaves={len(leaves)} priced={priced}")
-          print(f"RESULT bytes_spent={spent} bytes_per_leaf={spent/max(1,len(leaves)):.0f} (fragment~11500 fullpage~22800)")
+          print(f"RESULT bytes_spent={spent} bytes_per_leaf={spent/max(1,len(leaves)):.0f} (fragment~11500)")
           for r in rows:
               if "Wiper Blade" in (r.get("category_path") or ""):
-                  print("SAMPLE", r.get("brand_name"), r.get("part_number"), "$"+str(r.get("price")));
+                  print("SAMPLE", r.get("brand_name"), r.get("part_number"), "$"+str(r.get("price")))
           PY

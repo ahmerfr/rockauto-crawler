@@ -219,7 +219,14 @@ def run(shard_index: int, shard_total: int, out_path: str,
              "images": 0, "skipped": 0, "capped": 0}
     img_root = os.path.join(os.path.dirname(out_path) or ".", "images")
 
-    if os.getenv("SP_USE_EVOMI") == "1":
+    if os.getenv("SP_PROXY_URL"):
+        from proxy_manager import GatewayProxyManager
+        proxies = GatewayProxyManager()
+        print("[proxy] using rotating gateway from SP_PROXY_URL (datacenter/other)", flush=True)
+        if os.getenv("SP_MAX_GB"):
+            BUDGET.configure(os.getenv("SP_MAX_GB"),
+                             os.getenv("SP_BUDGET_STATE", "coverage/bytes_spent.txt"))
+    elif os.getenv("SP_USE_EVOMI") == "1":
         from proxy_manager import EvomiProxyManager
         proxies = EvomiProxyManager()
         print("[proxy] using Evomi residential gateway (rotating IPs)", flush=True)
