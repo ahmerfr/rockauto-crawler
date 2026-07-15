@@ -1,63 +1,81 @@
 name: Free-US Crawl Probe (no Evomi)
 
-# Decisive experiment for the under-$30 full-mirror plan: can GitHub's FREE US
-# runners crawl RockAuto directly (no paid proxy), get CORRECT US prices, and
-# survive the securimage CAPTCHA via OCR? If yes, the bulk crawl costs ~$0 and
-# Evomi is only a fallback. Crawls the one vehicle we already have Evomi-US truth
-# prices for (2010 Acura ZDX 3.7L V6) so prices can be compared directly.
-# Manual dispatch only; single short job; no paid bytes.
+# PER-IP SURVIVAL PROBE (single job = one fresh GitHub Azure IP, no proxy, no
+# CAPTCHA-solving). Decides the free-transport plan: crawl one big make at an
+# aggressive pace on ONE IP until RockAuto walls it, and report the three numbers
+# the whole 4-day/$50 verdict hinges on:
+#   (1) N  = requests survived before the wall (throughput ceiling of the free fleet)
+#   (2) bytes/leaf gz (real full-catalog $ on Evomi fallback)
+#   (3) priced ratio (do free Azure IPs get RockAuto's real US prices?)
+# Manual dispatch only; single short job; ZERO paid bytes. Never solves CAPTCHAs —
+# a wall just ends the job (in production a fresh job = a fresh IP).
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      make:
+        description: "make to hammer on one IP"
+        default: "honda"
+      budget:
+        description: "request ceiling (high, so we reach the IP wall not the budget)"
+        default: "4000"
 
 jobs:
   probe:
     runs-on: ubuntu-latest       # GitHub-hosted = US-region Azure IP
-    timeout-minutes: 30
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - name: Install tesseract OCR + deps
+      # No tesseract: we never solve CAPTCHAs. Faster setup too.
+      - name: Install Python deps
         run: |
-          sudo apt-get update && sudo apt-get install -y tesseract-ocr
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      # DATACENTER-PROXY GO/NO-GO: does a cheap rotating DC proxy (a) exit in the US
-      # (so RockAuto shows correct US prices) and (b) survive the ~200-req/IP wall via
-      # rotation WITHOUT captcha-solving? If yes -> the full 146GB catalog is ~$44 at
-      # ~$0.30/GB. Set the SP_PROXY_URL secret to your Webshare/Rayobyte rotating
-      # endpoint (http://user:pass@host:port) before running.
-      - name: Direct-Azure fragment smoke (ACURA, NO proxy, NO captcha-solve)
+      - name: Hammer one IP until the wall (NO proxy, NO captcha-solve)
         env:
           SP_USE_EVOMI: "0"
           SP_USE_PROXIES: "0"
           SP_SOLVE_CAPTCHA: "0"
           SP_DOWNLOAD_IMAGES: "0"
-          SP_MIN_DELAY: "0.3"
-          SP_MAX_DELAY: "0.7"
-          SP_YEAR_MIN: "2008"
-          SP_YEAR_MAX: "2012"
-          SP_BUDGET_STATE: coverage/dc_bytes.txt
+          SP_MIN_DELAY: "0.4"
+          SP_MAX_DELAY: "0.9"
+          SP_YEAR_MIN: "1990"
+          SP_YEAR_MAX: "2035"
+          SP_BUDGET_STATE: coverage/free_bytes.txt
         run: |
           mkdir -p coverage artifacts
-          SP_MAX_GB="0.3" python scraper/crawl_jsonl.py --only-makes acura \
-            --out artifacts/dc_smoke.ndjson --budget 260 --max-seconds 800 || true
+          START=$(date +%s)
+          SP_MAX_GB="1.0" python scraper/crawl_jsonl.py \
+            --only-makes "${{ github.event.inputs.make || 'honda' }}" \
+            --out artifacts/free_probe.ndjson \
+            --budget "${{ github.event.inputs.budget || '4000' }}" \
+            --max-seconds 2700 2>&1 | tee artifacts/crawl.log || true
+          END=$(date +%s); ELAPSED=$((END-START))
+          echo "=================== PROBE SUMMARY ==================="
+          echo "ELAPSED_SECONDS=$ELAPSED"
+          echo "--- crawler stop reason / blocks (per-IP wall = N) ---"
+          grep -iE "\[stop\]|\[budget\]|block|captcha|request budget|drained" artifacts/crawl.log | tail -15
           python - <<'PY'
           import json, os
           rows=[]
-          if os.path.exists("artifacts/dc_smoke.ndjson"):
-              rows=[json.loads(l) for l in open("artifacts/dc_smoke.ndjson",encoding="utf-8")]
-          leaves=set(); priced=0
+          if os.path.exists("artifacts/free_probe.ndjson"):
+              rows=[json.loads(l) for l in open("artifacts/free_probe.ndjson",encoding="utf-8")]
+          leaves={}
+          priced=0
           for r in rows:
-              leaves.add(r.get("source_url") or (r.get("category_path"),r.get("model_name")))
+              key=r.get("source_url") or (r.get("category_path"), r.get("model_name"), r.get("year"))
+              leaves[key]=1
               if r.get("price") is not None: priced+=1
-          b=open("coverage/dc_bytes.txt").read().strip() if os.path.exists("coverage/dc_bytes.txt") else "0"
+          b=open("coverage/free_bytes.txt").read().strip() if os.path.exists("coverage/free_bytes.txt") else "0"
           spent=int(b) if b.isdigit() else 0
-          print(f"RESULT listings={len(rows)} leaves={len(leaves)} priced={priced}")
-          print(f"RESULT bytes_spent={spent} bytes_per_leaf={spent/max(1,len(leaves)):.0f} (fragment~11500)")
-          for r in rows:
-              if "Wiper Blade" in (r.get("category_path") or ""):
-                  print("SAMPLE", r.get("brand_name"), r.get("part_number"), "$"+str(r.get("price")))
+          nleaves=max(1,len(leaves))
+          print(f"RESULT listings={len(rows)} leaves={len(leaves)} priced={priced} priced_pct={100*priced/max(1,len(rows)):.0f}%")
+          print(f"RESULT gz_bytes_spent={spent} bytes_per_leaf={spent/nleaves:.0f}")
+          # extrapolate: full catalog ~= (measured bytes/leaf) x (real non-empty leaves).
+          for est_leaves in (3_900_000, 6_000_000, 9_000_000):
+              gb=spent/nleaves*est_leaves/1e9
+              print(f"EXTRAP {est_leaves:>9,} leaves -> {gb:6.1f} GB gz -> ${gb*1.15:7.2f} Evomi")
           PY
