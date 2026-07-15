@@ -29,11 +29,15 @@ on:
       priority_makes:
         description: "Optional comma-separated makes to crawl first (passed as PRIORITY_MAKES)"
         default: ""
-  # Every 2h: with runs taking ~1.5-2h, the 20 job slots stay near-continuously
-  # busy (a new run's shards queue behind the finishing ones), maxing the free
-  # 20-IP throughput. Loader dedupes, so overlap just accumulates coverage.
-  schedule:
-    - cron: "0 */2 * * *"
+      min_delay:
+        description: "Min politeness delay per request (s). Lower = faster but walls a fresh IP sooner."
+        default: "0.4"
+      max_delay:
+        description: "Max politeness delay per request (s)."
+        default: "0.9"
+  # No cron: this fleet runs only on explicit manual dispatch. (The old every-2h
+  # schedule auto-fired CAPTCHA-solving runs unattended — removed. Re-add a
+  # schedule only once the no-solve fleet is the intended continuous crawler.)
 
 env:
   SHARD_TOTAL: "20"
@@ -54,10 +58,12 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install tesseract OCR + Python deps
+      # No tesseract: we NEVER solve CAPTCHAs. Free-IP coverage works by rotating
+      # to a fresh GitHub runner IP (a new job) when one IP hits RockAuto's wall —
+      # CAPTCHA AVOIDANCE, not solving. Dropping the apt install also shaves ~30s of
+      # per-job setup, which matters when jobs are short (abort at the IP's wall).
+      - name: Install Python deps
         run: |
-          sudo apt-get update
-          sudo apt-get install -y tesseract-ocr
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
@@ -75,9 +81,9 @@ jobs:
       - name: Crawl shard ${{ matrix.index }}
         env:
           SP_USE_PROXIES: "0"        # each runner already has its own fresh IP
-          SP_SOLVE_CAPTCHA: "1"      # OCR-solve securimage walls locally
-          SP_MIN_DELAY: "1.2"        # tighter (fresh GitHub IPs tolerate it); abort logic covers blocks
-          SP_MAX_DELAY: "2.8"
+          SP_SOLVE_CAPTCHA: "0"      # NEVER solve CAPTCHAs — rotate to a fresh runner IP instead
+          SP_MIN_DELAY: ${{ github.event.inputs.min_delay || '0.4' }}   # aggressive default; measure per-IP survival at this pace
+          SP_MAX_DELAY: ${{ github.event.inputs.max_delay || '0.9' }}
           SP_YEAR_MIN: "1900"        # widen from default 2010 -> ALL years RockAuto lists
           SP_YEAR_MAX: "2035"        # ceiling past any real model-year (RockAuto lists next-year models early)
           SP_MARKETS: ""             # empty = worldwide (all markets); market saved to vehicles.market
