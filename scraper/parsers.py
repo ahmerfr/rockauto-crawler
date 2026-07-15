@@ -332,10 +332,39 @@ _JUNK_IMG_RE = re.compile(
 )
 
 
+def _gallery_from_blob(soup, idx: str) -> list[str]:
+    """A part's FULL photo gallery lives in a hidden `#jsninlineimg[N]` JSON input
+    (`Slots[].ImageData`), not in the single displayed <img>. RockAuto shows only
+    the first, but a part can have several (TRICO 16190 has 10: Angle/Side/Top/…).
+    Pull the medium (`__ra_m.jpg`) URL from every slot — matches the single-image
+    path's size and the watermark-crop pipeline; keeps self-hosted files small."""
+    inp = soup.find(id=f"jsninlineimg[{idx}]")
+    raw = inp.get("value") if inp else None
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)  # bs4 already HTML-unescaped the attribute value
+    except (ValueError, TypeError):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for slot in data.get("Slots") or []:
+        im = (slot or {}).get("ImageData") or {}
+        u = _absolutise(im.get("Thumb") or im.get("Full") or im.get("Popup"))
+        if u and "/info/" in u.lower() and u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
+
+
 def _extract_product_images(soup, idx: str) -> list[str]:
     """RockAuto puts each part's photo in a SEPARATE structure keyed by the part's
     row index — `#inlineimg_container[N]` / `#listing_image_table[N]` — not inside
-    the part's text cell. Real photos are `/info/<n>/..._ra_m.jpg`. Pull those."""
+    the part's text cell. Real photos are `/info/<n>/..._ra_m.jpg`. Pull the whole
+    gallery from the JSON blob first; fall back to the single displayed <img>."""
+    blob = _gallery_from_blob(soup, idx)
+    if blob:
+        return blob
     out: list[str] = []
     seen: set[str] = set()
     for cid in (f"inlineimg_container[{idx}]", f"listing_image_table[{idx}]"):
@@ -1181,6 +1210,34 @@ if __name__ == "__main__":
           f"9717 Style should be 'Improved Frame Style', got {impr and _style(impr)}")
     check(wint is not None and _style(wint) == "Winter & Ice",
           f"35170 Style should be 'Winter & Ice' (entity unescaped), got {wint and _style(wint)}")
+
+    # ---- multi-image gallery (jsninlineimg blob) ----
+    # RockAuto keeps a part's FULL photo gallery in a hidden #jsninlineimg[N] JSON
+    # input (Slots[].ImageData), NOT in the single displayed <img>. TRICO 16190 has
+    # 10 photos; the old parser captured only the 1 shown. Mirror the real &quot;-
+    # escaped, \/-slashed attribute so we prove we decode + json-parse the blob.
+    GALLERY_HTML = (
+        '<table><tbody class="listing-container-border" id="listingcontainer[1]">'
+        '<tr><td>'
+        '<span class="listing-final-manufacturer">TRICO</span>'
+        '<span class="listing-final-partnumber">16190</span>'
+        '<a class="span-link-out-desc" href="/x">NeoForm</a>'
+        '<span id="dprice[1][v]">$4.40</span>'
+        '<input type="hidden" id="jsninlineimg[1]" value="{&quot;Slots&quot;:['
+        '{&quot;ImageData&quot;:{&quot;Thumb&quot;:&quot;\\/info\\/159\\/16-190_Angle__ra_m.jpg&quot;,&quot;Full&quot;:&quot;\\/info\\/159\\/16-190_Angle.jpg&quot;}},'
+        '{&quot;ImageData&quot;:{&quot;Thumb&quot;:&quot;\\/info\\/159\\/16-190_Side__ra_m.jpg&quot;,&quot;Full&quot;:&quot;\\/info\\/159\\/16-190_Side.jpg&quot;}},'
+        '{&quot;ImageData&quot;:{&quot;Thumb&quot;:&quot;\\/info\\/159\\/16-190_Top__ra_m.jpg&quot;,&quot;Full&quot;:&quot;\\/info\\/159\\/16-190_Top.jpg&quot;}}'
+        ']}">'
+        '</td></tr></tbody></table>'
+    )
+    gal = parse_listings(GALLERY_HTML, CTX)
+    check(len(gal) == 1, f"gallery: expected 1 part, got {len(gal)}")
+    if gal:
+        gimgs = gal[0]["image_urls"]
+        check(len(gimgs) == 3,
+              f"gallery: expected 3 images from jsninlineimg blob, got {len(gimgs)}: {gimgs}")
+        check("https://www.rockauto.com/info/159/16-190_Side__ra_m.jpg" in gimgs,
+              f"gallery: non-primary Side photo missing (only captured the shown img?): {gimgs}")
 
     # ---- CAPTCHA detection ----
     check(is_captcha("", "https://www.rockauto.com/captcha/?redirecturl=x") is True,
