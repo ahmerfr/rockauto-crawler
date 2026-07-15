@@ -193,6 +193,13 @@ class RAClient:
 
     # -- public API --------------------------------------------------------
 
+    def _max_attempts(self) -> int:
+        """Retry budget per request. DIRECT (no proxy to rotate to): a burned IP
+        will keep failing, and each retry re-warms a fresh session (minutes of
+        thrash) — so fail FAST (1 attempt) and let the crawl loop abort the job so
+        a fresh CI runner IP takes over. PROXIED: full retries (each gets a new IP)."""
+        return 1 if self._proxy is None else int(RATE["max_attempts"])
+
     def _exit_country(self) -> str | None:
         """Best-effort 2-letter country of the current session's exit IP via ipinfo,
         so SP_REQUIRE_US can reject non-US exits before crawling. Tiny (~300B), not
@@ -264,7 +271,7 @@ class RAClient:
         if self._session is None:
             self.new_session()
         last_err: str | None = None
-        attempts = int(RATE["max_attempts"])
+        attempts = self._max_attempts()
         for attempt in range(attempts):
             self._sleep_polite(attempt)
             try:
@@ -297,7 +304,7 @@ class RAClient:
         if self._session is None:
             self.new_session()
         jsn = dict(node.get("jsn") or {})
-        attempts = int(RATE["max_attempts"])
+        attempts = self._max_attempts()
         last_err: str | None = None
         for attempt in range(attempts):
             self._sleep_polite(attempt)
@@ -368,7 +375,7 @@ class RAClient:
         """
         if self._session is None:
             self.new_session()
-        attempts = int(RATE["max_attempts"])
+        attempts = self._max_attempts()
         last_err = None
         for attempt in range(attempts):
             self._sleep_polite(attempt)
@@ -422,7 +429,7 @@ class RAClient:
         guide HTML (every vehicle the part fits) — the key to a normalized crawl."""
         if self._session is None:
             self.new_session()
-        attempts = int(RATE["max_attempts"])
+        attempts = self._max_attempts()
         last_err = None
         for attempt in range(attempts):
             self._sleep_polite(attempt)
