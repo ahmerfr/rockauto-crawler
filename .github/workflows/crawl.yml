@@ -29,6 +29,12 @@ on:
       priority_makes:
         description: "Optional comma-separated makes to crawl first (passed as PRIORITY_MAKES)"
         default: ""
+      min_delay:
+        description: "Min politeness delay per request (s). Lower = faster but walls a fresh IP sooner."
+        default: "0.4"
+      max_delay:
+        description: "Max politeness delay per request (s)."
+        default: "0.9"
   # Every 2h: with runs taking ~1.5-2h, the 20 job slots stay near-continuously
   # busy (a new run's shards queue behind the finishing ones), maxing the free
   # 20-IP throughput. Loader dedupes, so overlap just accumulates coverage.
@@ -78,8 +84,8 @@ jobs:
         env:
           SP_USE_PROXIES: "0"        # each runner already has its own fresh IP
           SP_SOLVE_CAPTCHA: "0"      # NEVER solve CAPTCHAs — rotate to a fresh runner IP instead
-          SP_MIN_DELAY: "1.2"        # politeness stretches per-IP survival before the wall
-          SP_MAX_DELAY: "2.8"
+          SP_MIN_DELAY: ${{ github.event.inputs.min_delay || '0.4' }}   # aggressive default; measure per-IP survival at this pace
+          SP_MAX_DELAY: ${{ github.event.inputs.max_delay || '0.9' }}
           SP_YEAR_MIN: "1900"        # widen from default 2010 -> ALL years RockAuto lists
           SP_YEAR_MAX: "2035"        # ceiling past any real model-year (RockAuto lists next-year models early)
           SP_MARKETS: ""             # empty = worldwide (all markets); market saved to vehicles.market
