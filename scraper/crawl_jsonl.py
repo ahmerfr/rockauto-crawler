@@ -151,13 +151,18 @@ def process(client, node: dict, tree_only: bool = False) -> tuple[list[dict], li
                                  if href.startswith("/") else href)
         mgi = payload.get("mgi")
         listings = []
+        got_fragment = False
         if jsn is not None and mgi is not None:
             try:
                 frag = client.fetch_listings(jsn, int(mgi))
                 listings = parsers.parse_listings(frag, ctx)
+                got_fragment = True   # fetch SUCCEEDED — trust it even at 0 parts
             except Exception:  # noqa: BLE001
-                listings = []
-        if not listings:   # fragment errored/empty -> confirm via full page
+                got_fragment = False
+        # Only a fetch FAILURE falls back to the (2x heavier) full page. An empty
+        # fragment means a genuinely empty parttype — NOT a reason to re-fetch it,
+        # which was burning ~40% of the byte budget on parttypes with no parts.
+        if not got_fragment:
             html = client.get(href) if href else client.fetch_children(jsn)
             listings = parsers.parse_listings(html, ctx)
         return listings, []
