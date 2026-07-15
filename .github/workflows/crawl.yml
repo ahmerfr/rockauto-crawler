@@ -35,20 +35,25 @@ on:
       max_delay:
         description: "Max politeness delay per request (s)."
         default: "0.9"
-  # No cron: this fleet runs only on explicit manual dispatch. (The old every-2h
-  # schedule auto-fired CAPTCHA-solving runs unattended — removed. Re-add a
-  # schedule only once the no-solve fleet is the intended continuous crawler.)
+  # Every 2h: with runs taking ~1.5-2h, the 20 job slots stay near-continuously
+  # busy (a new run's shards queue behind the finishing ones), maxing the free
+  # 20-IP throughput. Loader dedupes, so overlap just accumulates coverage.
+  schedule:
+    - cron: "0 */2 * * *"
 
 env:
-  SHARD_TOTAL: "20"
+  SHARD_TOTAL: "40"
 
 jobs:
   crawl:
     strategy:
       fail-fast: false
-      max-parallel: 20
-      matrix:
-        index: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+      max-parallel: 20        # GitHub free hard cap (20 concurrent). The extra 20
+      matrix:                 # matrix entries QUEUE and swap into a slot the instant
+                              # a running IP walls and its job exits = continuous
+                              # fresh-IP rotation (the user's shard-swap idea).
+        index: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+                20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:
@@ -57,6 +62,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+          cache: 'pip'   # shard-swap speedup: cache deps so a swapped-in fresh-IP job
+                         # starts in seconds, not ~2-10 min. Setup overhead was the
+                         # bottleneck between IP rotations (per user's insight).
 
       # No tesseract: we NEVER solve CAPTCHAs. Free-IP coverage works by rotating
       # to a fresh GitHub runner IP (a new job) when one IP hits RockAuto's wall —
