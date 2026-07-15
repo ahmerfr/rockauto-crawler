@@ -21,4 +21,8 @@ spl_autoload_register(function (string $class): void {
 
 require BASE_DIR . '/app/Core/helpers.php';
 
-return require BASE_DIR . '/config/config.php';
+$config = require BASE_DIR . '/config/config.php';
+if (!defined('SP_CDN_BASE')) {
+    define('SP_CDN_BASE', (string) ($config['cdn']['base'] ?? ''));
+}
+return $config;

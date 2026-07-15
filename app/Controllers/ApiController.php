@@ -83,11 +83,25 @@ class ApiController extends Controller
     public function treeMakes(): void
     {
         $rows = $this->db()->query(
-            "SELECT m.name, m.slug, COUNT(DISTINCT v.id) AS n
+            "SELECT m.name, m.slug, COUNT(DISTINCT v.id) AS n,
+                    GROUP_CONCAT(DISTINCT v.market) AS mk
                FROM makes m JOIN vehicles v ON v.make_id = m.id
               GROUP BY m.id ORDER BY m.name"
         )->fetchAll();
-        $this->json($rows);
+        $this->json(array_map([self::class, 'withMarkets'], $rows));
+    }
+
+    /** Split a make's GROUP_CONCAT of per-vehicle market CSVs into a deduped,
+     *  ordered list of market codes (the flags RockAuto shows: US, CA, MX …). */
+    private static function withMarkets(array $r): array
+    {
+        $order = ['US' => 0, 'CA' => 1, 'MX' => 2];
+        $codes = array_values(array_unique(array_filter(array_map(
+            'trim', explode(',', (string) ($r['mk'] ?? ''))))));
+        usort($codes, fn($a, $b) => ($order[$a] ?? 99) <=> ($order[$b] ?? 99) ?: strcmp($a, $b));
+        unset($r['mk']);
+        $r['markets'] = $codes;
+        return $r;
     }
 
     /** Level 2: years for a make (newest first). */
@@ -156,6 +170,13 @@ class ApiController extends Controller
         );
         $stmt->execute([':veh' => (string) ($_GET['vehicle'] ?? ''),
                         ':cat' => (string) ($_GET['category'] ?? '')]);
-        $this->json($stmt->fetchAll());
+        $rows = $stmt->fetchAll();
+        // Customer-facing prices carry the reseller markup; core deposit does not.
+        foreach ($rows as &$r) {
+            $r['img']   = img_url($r['img'] ?? '');
+            $r['price'] = sell_price($r['price']);   // NULL (OOS) passes through
+        }
+        unset($r);
+        $this->json($rows);
     }
 }

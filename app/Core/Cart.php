@@ -96,6 +96,11 @@ class Cart
         // cart_items.unit_price is NOT NULL — never let a priceless line into a cart.
         if ($price === null) return false;
 
+        // Capture the CUSTOMER price (RockAuto cost * reseller markup) so the cart,
+        // Stripe charge and stored order all bill the marked-up amount. The base cost
+        // stays in parts.price; markup lives only in the settings table.
+        $sell = \sell_price($price);
+
         $cartId = $this->id();
         $this->db->prepare(
             "INSERT INTO cart_items (cart_id, part_id, variant_id, quantity, unit_price)
@@ -103,7 +108,7 @@ class Cart
              ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity),
                                      unit_price = VALUES(unit_price)"
         )->execute([':cart' => $cartId, ':part' => $partId, ':variant' => $variantId,
-                    ':qty' => $qty, ':price' => $price]);
+                    ':qty' => $qty, ':price' => $sell]);
         return true;
     }
 

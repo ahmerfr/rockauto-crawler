@@ -27,4 +27,8 @@ return [
     ],
     // Shipping rule (simple flat rate, free over threshold).
     'shipping' => ['flat' => 9.95, 'free_over' => 75.00],
+    // Part images: when 'base' is set, part photos are served from this CDN
+    // (Bunny pull zone) instead of local /RockAuto/assets/parts/. Empty = local.
+    // Flip to 'https://supremeautos-parts.b-cdn.net' once the mirror upload is done.
+    'cdn' => ['base' => getenv('SP_CDN_BASE') ?: 'https://supremeautos-parts.b-cdn.net'],
 ];

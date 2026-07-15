@@ -22,7 +22,9 @@ class PartController extends Controller
         $part = $stmt->fetch();
         if (!$part) { $this->notFoundResponse(); return; }
 
-        $images = $db->prepare("SELECT path, alt FROM part_images WHERE part_id = ? ORDER BY position");
+        // GROUP BY path: RockAuto serves the same photo under carousel-variant URLs
+        // that normalize to one local file, so dedupe by path or it renders twice.
+        $images = $db->prepare("SELECT path, MIN(alt) AS alt FROM part_images WHERE part_id = ? GROUP BY path ORDER BY MIN(position)");
         $images->execute([$part['id']]);
         $images = $images->fetchAll();
 

@@ -16,7 +16,7 @@
       <article class="part-row">
         <div class="part-thumb">
           <?php if (!empty($p['primary_image_path'])): ?>
-            <img src="<?= e($p['primary_image_path']) ?>" alt="<?= e($p['name']) ?>" loading="lazy"
+            <img src="<?= e(img_url($p['primary_image_path'])) ?>" alt="<?= e($p['name']) ?>" loading="lazy"
                  onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'noimg',textContent:'No image'}))">
           <?php else: ?><div class="noimg">No image</div><?php endif; ?>
         </div>
@@ -29,7 +29,7 @@
           </div>
         </div>
         <div class="part-buy">
-          <div class="price"><?= money($p['price']) ?></div>
+          <div class="price"><?= price_tag($p['price']) ?></div>
           <a class="btn btn-sm" href="<?= e($_controller->url('/part/' . rawurlencode($p['sku']))) ?>">View</a>
         </div>
       </article>

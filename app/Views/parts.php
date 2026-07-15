@@ -44,9 +44,9 @@ $label = trim($vehicle['year'] . ' ' . $vehicle['make'] . ' ' . $vehicle['model'
         </div>
       </div>
       <div class="part-buy">
-        <div class="price"><?= money($p['price']) ?></div>
+        <div class="price"><?= price_tag($p['price']) ?></div>
         <?php if ($hasRange): ?>
-          <div class="opt-range"><?= $nv ?> options &middot; <?= money($vmin) ?>&ndash;<?= money($vmax) ?></div>
+          <div class="opt-range"><?= $nv ?> options &middot; <?= price_tag($vmin) ?>&ndash;<?= price_tag($vmax) ?></div>
         <?php endif; ?>
         <?php if ((float)$p['core_charge'] > 0): ?>
           <div class="core">+<?= money($p['core_charge']) ?> core</div>

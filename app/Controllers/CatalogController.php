@@ -110,12 +110,14 @@ class CatalogController extends Controller
                    FROM parts p
               LEFT JOIN brands b ON b.id = p.brand_id
               LEFT JOIN part_fitment pf ON pf.part_id = p.id
-                  WHERE p.name LIKE :q OR p.part_number LIKE :q OR p.sku LIKE :q
+                  WHERE p.name LIKE :q1 OR p.part_number LIKE :q2 OR p.sku LIKE :q3
                   GROUP BY p.id
                   ORDER BY (p.part_number = :exact) DESC, fits DESC
                   LIMIT 100"
             );
-            $stmt->execute([':q' => $like, ':exact' => $q]);
+            // Native PDO prepares can't reuse a named placeholder, so give each
+            // LIKE its own (:q1/:q2/:q3) — reusing :q threw HY093 and 500'd search.
+            $stmt->execute([':q1' => $like, ':q2' => $like, ':q3' => $like, ':exact' => $q]);
             $parts = $stmt->fetchAll();
         }
         $this->render('search', compact('q', 'parts'),

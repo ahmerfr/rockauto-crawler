@@ -10,14 +10,15 @@
     <?php $main = $images[0]['path'] ?? $part['primary_image_path'] ?? ''; ?>
     <div class="pd-main-img">
       <?php if ($main): ?>
-        <img src="<?= e($main) ?>" alt="<?= e($part['name']) ?>"
+        <img src="<?= e(img_url($main)) ?>" alt="<?= e($part['name']) ?>"
              onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'noimg lg',textContent:'No image'}))">
       <?php else: ?><div class="noimg lg">No image</div><?php endif; ?>
     </div>
     <?php if (count($images) > 1): ?>
       <div class="pd-thumbs">
-        <?php foreach ($images as $img): ?>
-          <img src="<?= e($img['path']) ?>" alt="<?= e($img['alt'] ?? '') ?>" loading="lazy"
+        <?php /* skip [0] — it's already the main image (static gallery, no switch) */ ?>
+        <?php foreach (array_slice($images, 1) as $img): ?>
+          <img src="<?= e(img_url($img['path'])) ?>" alt="<?= e($img['alt'] ?? '') ?>" loading="lazy"
                onerror="this.style.display='none'">
         <?php endforeach; ?>
       </div>
@@ -44,7 +45,7 @@
         $buyable    = $shownPrice !== null;
       ?>
       <div class="pd-price" id="pdPrice" data-core="<?= e((string)$shownCore) ?>">
-        <?= money($shownPrice) ?>
+        <?= price_tag($shownPrice) ?>
         <?php if ((float)$shownCore > 0): ?><span class="core">+<?= money($shownCore) ?> core</span><?php endif; ?>
       </div>
       <div class="pd-stock <?= $stock > 0 ? 'in' : 'out' ?>">
@@ -58,14 +59,14 @@
             <select name="variant_id" id="pdVariant">
               <?php foreach ($variants as $v): ?>
                 <option value="<?= (int)$v['id'] ?>"
-                        data-price="<?= $v['price'] === null ? '' : e((string)$v['price']) ?>"
+                        data-price="<?= $v['price'] === null ? '' : e((string) sell_price($v['price'])) ?>"
                         data-core="<?= e((string)$v['core_charge']) ?>"
                         <?= $v['oos'] ? 'disabled' : '' ?>
                         <?= ($default && $v['id'] === $default['id']) ? 'selected' : '' ?>>
                   <?= e($v['type']) ?>
-                  <?= $v['price'] === null ? '(Out of Stock)' : '(' . money($v['price']) . ')' ?>
+                  <?= $v['price'] === null ? '(Out of Stock)' : '(' . price_tag($v['price']) . ')' ?>
                   <?php if ($v['pack_size'] && $v['pack_total'] !== null): ?>
-                    — pack of <?= (int)$v['pack_size'] ?> <?= money($v['pack_total']) ?>
+                    — pack of <?= (int)$v['pack_size'] ?> <?= price_tag($v['pack_total']) ?>
                   <?php endif; ?>
                   <?= $v['oos'] ? '— unavailable' : '' ?>
                 </option>

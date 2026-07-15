@@ -7,6 +7,7 @@ $nav = [
   'categories' => ['Categories', '/admin/categories'],
   'catalog'    => ['Vehicle Catalog', '/admin/catalog'],
   'imports'    => ['Imports', '/admin/imports'],
+  'settings'   => ['Pricing', '/admin/settings'],
 ];
 ?>
 <!doctype html>

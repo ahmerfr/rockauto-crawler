@@ -20,7 +20,7 @@ $pages = (int) ceil($total / max(1, $perPage));
       <tr>
         <td class="adm-thumb-cell">
           <?php if (!empty($p['primary_image_path'])): ?>
-            <img src="<?= e($p['primary_image_path']) ?>" alt="" loading="lazy"
+            <img src="<?= e(img_url($p['primary_image_path'])) ?>" alt="" loading="lazy"
                  style="width:44px;height:44px;object-fit:contain;background:#fff;border:1px solid #e2e2e2;border-radius:4px;"
                  onerror="this.style.visibility='hidden'">
           <?php else: ?>

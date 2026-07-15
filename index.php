@@ -72,4 +72,7 @@ $router->get('/admin/imports', 'Admin\ImportController@index');
 $router->post('/admin/imports/vpic', 'Admin\ImportController@runVpic');
 $router->post('/admin/imports/acespies', 'Admin\ImportController@runAcesPies');
 
+$router->get('/admin/settings', 'Admin\SettingsController@index');
+$router->post('/admin/settings', 'Admin\SettingsController@save');
+
 $router->dispatch($_SERVER['REQUEST_METHOD'], $_SERVER['REQUEST_URI']);

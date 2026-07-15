@@ -11,7 +11,7 @@
       <div class="cart-line">
         <div class="part-thumb">
           <?php if (!empty($it['primary_image_path'])): ?>
-            <img src="<?= e($it['primary_image_path']) ?>" alt="<?= e($it['name']) ?>"
+            <img src="<?= e(img_url($it['primary_image_path'])) ?>" alt="<?= e($it['name']) ?>"
                  onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'noimg',textContent:'No image'}))">
           <?php else: ?><div class="noimg">No image</div><?php endif; ?>
         </div>

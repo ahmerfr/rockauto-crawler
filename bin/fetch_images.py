@@ -67,7 +67,12 @@ def main() -> int:
             done += 1
             if web:
                 ok += 1
-                cur.execute("UPDATE part_images SET path=%s WHERE path=%s", (web, url))
+                # Two carousel-variant URLs can crop to ONE local file; with the
+                # unique (part_id, path) index the 2nd relink collides. UPDATE IGNORE
+                # relinks the non-colliding rows, then DELETE drops the leftover raw
+                # rows whose local path already exists for that part (a true dup).
+                cur.execute("UPDATE IGNORE part_images SET path=%s WHERE path=%s", (web, url))
+                cur.execute("DELETE FROM part_images WHERE path=%s", (url,))
                 cur.execute("UPDATE parts SET primary_image_path=%s WHERE primary_image_path=%s",
                             (web, url))
             if done % 100 == 0:
