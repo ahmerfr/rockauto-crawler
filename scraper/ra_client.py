@@ -192,6 +192,18 @@ class RAClient:
 
     # -- public API --------------------------------------------------------
 
+    def _exit_country(self) -> str | None:
+        """Best-effort 2-letter country of the current session's exit IP via ipinfo,
+        so SP_REQUIRE_US can reject non-US exits before crawling. Tiny (~300B), not
+        RockAuto, not budget-metered. Returns None on any failure (fail-open)."""
+        try:
+            r = self._session.get("https://ipinfo.io/json", timeout=12)
+            if r.status_code == 200:
+                return ((r.json().get("country") or "").upper()) or None
+        except Exception:  # noqa: BLE001
+            return None
+        return None
+
     def new_session(self) -> None:
         """Start a fresh session: pick a proxy + UA, warm CATALOG_ROOT for
         cookies, and harvest the `_nck` nonce.
@@ -203,11 +215,22 @@ class RAClient:
         a usable session behind so the higher-level get()/fetch_children() retry
         loops can take over and keep rotating.
         """
+        require_us = os.getenv("SP_REQUIRE_US") == "1"
         last_err: str | None = None
         for attempt in range(int(RATE["max_attempts"])):
             self._proxy = self._pool_get()
             self._ua = random.choice(USER_AGENTS)
             self._session = self._build_session()
+            # US-geo guard: RockAuto serves inflated INTERNATIONAL prices to non-US
+            # IPs, so with a mixed-geo rotating proxy, reject any exit that isn't US
+            # and rotate to a fresh IP (quarantine is a no-op for a gateway, but the
+            # next loop opens a new connection = new exit IP).
+            if require_us and self._proxy:
+                cc = self._exit_country()
+                if cc and cc != "US":
+                    last_err = f"non-US exit ({cc})"
+                    self._quarantine_current()
+                    continue
             try:
                 resp = self._send("GET", CATALOG_ROOT)
             except RequestException as exc:  # dead/slow proxy — try another
@@ -380,6 +403,50 @@ class RAClient:
             frag = self._extract_catalog_fragment(data)
             return frag if frag is not None else ""
         raise Blocked(f"fetch_listings blocked after {attempts} attempts ({last_err})")
+
+    def fetch_buyers_guide(self, part_data: dict) -> str:
+        """Fetch ONE part's full vehicle fitment (buyers guide) via catalogapi
+        func=getbuyersguide. `part_data` is the listing's partData blob (as the site
+        JS passes it: {groupindex, listing_data_essential, ...}). Returns the buyers
+        guide HTML (every vehicle the part fits) — the key to a normalized crawl."""
+        if self._session is None:
+            self.new_session()
+        attempts = int(RATE["max_attempts"])
+        last_err = None
+        for attempt in range(attempts):
+            self._sleep_polite(attempt)
+            body = {
+                "func": "getbuyersguide",
+                "payload": json.dumps({"partData": part_data}, separators=(",", ":")),
+                "api_json_request": "1",
+                "sctchecked": "1",
+                "scbeenloaded": "false",
+                "curCartGroupID": "",
+            }
+            if self._nck:
+                body["_nck"] = self._nck
+            try:
+                resp = self._send("POST", CATALOG_API, data=body, headers=self._api_headers())
+            except RequestException as exc:
+                last_err = f"{type(exc).__name__}: {exc}"
+                self.rotate(); continue
+            if self._is_captcha(resp):
+                last_err = "captcha on getbuyersguide"
+                if not self._try_solve_captcha(resp):
+                    self.rotate()
+                continue
+            try:
+                data = resp.json()
+            except ValueError:
+                if self._is_captcha_body(resp.text):
+                    self.rotate()
+                else:
+                    last_err = "non-JSON getbuyersguide"
+                continue
+            self._absorb_nonce(data)
+            frag = self._extract_catalog_fragment(data)
+            return frag if frag is not None else (resp.text or "")
+        raise Blocked(f"fetch_buyers_guide blocked after {attempts} attempts ({last_err})")
 
     def rotate(self) -> None:
         """Quarantine the current proxy (captcha cool-down) and start fresh."""
