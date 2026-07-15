@@ -381,6 +381,18 @@ def _extract_product_images(soup, idx: str) -> list[str]:
     return out
 
 
+_MOREINFO_RE = re.compile(r"moreinfo\.php\?pk=(\d+)&(?:amp;)?cc=(\d+)&(?:amp;)?pt=(\d+)")
+
+
+def _extract_moreinfo_key(cont) -> dict | None:
+    """A part's `moreinfo` detail key {pk, cc, pt} from its "More Info" link, so a
+    later pass fetches ONE detail page per unique part (description/specs/features)
+    instead of per listing. None if the row has no more-info link."""
+    a = cont.find("a", href=_MOREINFO_RE)
+    m = _MOREINFO_RE.search(a.get("href", "")) if a else None
+    return {"pk": m.group(1), "cc": m.group(2), "pt": m.group(3)} if m else None
+
+
 def _extract_images(cont) -> list[str]:
     """Product images in a container: data-src preferred over src, deduped.
     Filters out RockAuto UI chrome (flags, truck, Heart, help icons, spacers)."""
@@ -743,6 +755,55 @@ def _style_by_index(html: str) -> dict:
     return out
 
 
+_ALT_NUM_RE = re.compile(r"\{Alternate Inventory Numbers:\s*([^}]+)\}")
+
+
+def parse_moreinfo(html: str) -> dict:
+    """Parse a part's `moreinfo.php` detail page — the content the listing DOESN'T
+    carry: the marketing description, Features & Benefits bullets, the structured
+    Specifications table, and alternate inventory (interchange) numbers.
+
+    Returns {description, features[], specs[{name,value}], alt_numbers[]} with empty
+    values where a block is absent. Keyed by part number, so ONE fetch per unique
+    part serves all its vehicle listings. (The generic "Which Wiper Blade" style
+    comparison chart is deliberately skipped — it's line-wide marketing, not this
+    part's data.)"""
+    soup = _soup(html)
+    out = {"description": None, "features": [], "specs": [], "alt_numbers": []}
+
+    # Specifications — a <table class="moreinfotable"> of <tr><td>name</td><td>val</td></tr>
+    # (first row is a <th> title). This maps straight onto part_attributes.
+    for tbl in soup.select("table.moreinfotable"):
+        for tr in tbl.find_all("tr"):
+            tds = tr.find_all("td")
+            if len(tds) == 2:
+                name, val = _text(tds[0]), _text(tds[1])
+                if name and val:
+                    out["specs"].append({"name": name, "value": val})
+
+    # Description + Features — inside <section aria-label="More Information for ...">.
+    # Text before "Features & Benefits" is the marketing blurb; the first <ul> is
+    # the feature bullets.
+    sec = soup.find("section", attrs={"aria-label": re.compile(r"^More Information for")})
+    if sec:
+        ul = sec.find("ul")
+        if ul:
+            out["features"] = [_text(li) for li in ul.find_all("li") if _text(li)]
+        # Blurb: full section text truncated at the Features label.
+        full = _text(sec)
+        blurb = re.split(r"Features\s*&\s*Benefits", full, maxsplit=1)[0].strip()
+        out["description"] = blurb or None
+
+    # Alternate inventory / interchange numbers: "{Alternate Inventory Numbers: a, b, c}"
+    # Match on tag-free text — the raw HTML sneaks a </span> between the label and
+    # first number.
+    m = _ALT_NUM_RE.search(soup.get_text(" "))
+    if m:
+        out["alt_numbers"] = [n.strip() for n in m.group(1).split(",") if n.strip()]
+
+    return out
+
+
 def parse_listings(html: str, ctx: dict) -> list[dict]:
     """
     Parse a leaf catalog page's part rows into Listing dicts (CONTRACT §2).
@@ -844,6 +905,7 @@ def parse_listings(html: str, ctx: dict) -> list[dict]:
             doc_urls = _extract_docs(cont)
             weight = _extract_weight(cont)
             fitment_note = _extract_fitment_note(cont)
+            moreinfo = _extract_moreinfo_key(cont)
 
             # A row with neither brand nor part number is noise — skip it.
             if not brand_name and not part_number:
@@ -866,6 +928,7 @@ def parse_listings(html: str, ctx: dict) -> list[dict]:
                     "warranty": warranty,
                     "interchange": interchange or None,
                     "doc_urls": doc_urls or None,
+                    "moreinfo": moreinfo,
                 }
             )
             listings.append(listing)
@@ -1114,7 +1177,7 @@ if __name__ == "__main__":
         "market", "category_path", "brand_name", "part_number", "name", "description",
         "price", "variants", "core_charge", "weight", "image_urls", "attributes",
         "warehouse_code", "quantity", "fitment_note", "warranty",
-        "interchange", "doc_urls",
+        "interchange", "doc_urls", "moreinfo",
     }
 
     if parts:
@@ -1238,6 +1301,34 @@ if __name__ == "__main__":
               f"gallery: expected 3 images from jsninlineimg blob, got {len(gimgs)}: {gimgs}")
         check("https://www.rockauto.com/info/159/16-190_Side__ra_m.jpg" in gimgs,
               f"gallery: non-primary Side photo missing (only captured the shown img?): {gimgs}")
+
+    # ---- moreinfo detail page (description / features / specs / alt numbers) ----
+    MOREINFO_HTML = (
+        '<html><body>'
+        '<table class="bdytext"><tr><td>'
+        '<section aria-label="More Information for TRICO 16190">'
+        'Great premium blade blurb.'
+        '<b>Features &amp; Benefits:</b><ul><li>Feature one</li><li>Feature two</li></ul>'
+        '<div>Which Wiper Blade is Right For You? line-wide chart, must be ignored</div>'
+        '</section></td></tr></table>'
+        '<div> {Alternate Inventory Numbers: 16-190, 61943} </div>'
+        '<section aria-label="TRICO 16190 Specifications"><table class="moreinfotable">'
+        '<tr><th colspan="2">TRICO 16190 Specifications</th></tr>'
+        '<tr><td>Blade Material</td><td>Natural Rubber</td></tr>'
+        '<tr><td>Length</td><td>19.0 IN</td></tr>'
+        '</table></section></body></html>'
+    )
+    mi = parse_moreinfo(MOREINFO_HTML)
+    check(mi["description"] == "Great premium blade blurb.",
+          f"moreinfo description wrong: {mi['description']!r}")
+    check(mi["features"] == ["Feature one", "Feature two"],
+          f"moreinfo features wrong: {mi['features']}")
+    check([s["name"] for s in mi["specs"]] == ["Blade Material", "Length"],
+          f"moreinfo specs (th header should be skipped): {mi['specs']}")
+    check({"name": "Length", "value": "19.0 IN"} in mi["specs"],
+          f"moreinfo spec value wrong: {mi['specs']}")
+    check(mi["alt_numbers"] == ["16-190", "61943"],
+          f"moreinfo alt_numbers wrong: {mi['alt_numbers']}")
 
     # ---- CAPTCHA detection ----
     check(is_captcha("", "https://www.rockauto.com/captcha/?redirecturl=x") is True,
