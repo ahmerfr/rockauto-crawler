@@ -30,6 +30,7 @@ CREATE TABLE stg_listings (
   weight         DECIMAL(8,2) NULL,
   image_urls     JSON NULL,
   attributes     JSON NULL,                        -- [{"name":..,"value":..}, ...]
+  moreinfo       TEXT NULL,                        -- {"pk":..,"cc":..,"pt":..} detail key
   warehouse_code VARCHAR(30) NULL,
   quantity       INT NULL,
   fitment_note   VARCHAR(255) NULL,                -- per-vehicle note (ACES Position/Note)

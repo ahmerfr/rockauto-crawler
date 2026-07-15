@@ -255,9 +255,9 @@ def stage_listings(conn, listings: list[dict], batch_id: str) -> int:
                     " trim, market, category_path, brand_name, part_number, name, "
                     " description, price, core_charge, weight, image_urls, "
                     " attributes, warehouse_code, quantity, fitment_note, "
-                    " warranty, interchange, doc_urls, variants, batch_id) "
+                    " warranty, interchange, doc_urls, variants, moreinfo, batch_id) "
                     "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
-                    "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                     (
                         lst.get("source", "rockauto"),
                         lst.get("source_url"),
@@ -288,6 +288,7 @@ def stage_listings(conn, listings: list[dict], batch_id: str) -> int:
                         _json_or_none(lst.get("interchange")),
                         _json_or_none(lst.get("doc_urls")),
                         _json_or_none(lst.get("variants")),
+                        _json_or_none(lst.get("moreinfo")),
                         batch_id,
                     ),
                 )

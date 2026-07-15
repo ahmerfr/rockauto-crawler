@@ -63,6 +63,21 @@ SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS
 SET @s := IF(@c=0, 'ALTER TABLE stg_listings ADD COLUMN variants JSON NULL', 'DO 0');
 PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
 
+-- 5. moreinfo detail enrichment (description/specs/features live only on
+-- moreinfo.php). parts.moreinfo_key {pk,cc,pt} lets a pass fetch ONE detail page
+-- per part; moreinfo_done gates resumability; stg_listings.moreinfo carries the
+-- key from crawl through staging into the loader.
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS
+           WHERE TABLE_SCHEMA='supreme_parts' AND TABLE_NAME='parts' AND COLUMN_NAME='moreinfo_key');
+SET @s := IF(@c=0, 'ALTER TABLE parts ADD COLUMN moreinfo_key VARCHAR(48) NULL AFTER source_url,
+                      ADD COLUMN moreinfo_done TINYINT NOT NULL DEFAULT 0', 'DO 0');
+PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS
+           WHERE TABLE_SCHEMA='supreme_parts' AND TABLE_NAME='stg_listings' AND COLUMN_NAME='moreinfo');
+SET @s := IF(@c=0, 'ALTER TABLE stg_listings ADD COLUMN moreinfo TEXT NULL', 'DO 0');
+PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+
 -- crawl_frontier.payload: carries the node jsn + accumulated fitment context so the
 -- crawl is fully resumable across restarts without re-deriving state.
 SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS

@@ -104,6 +104,16 @@ def _jload(v, default):
         return default
 
 
+def _moreinfo_key(mi):
+    """Flatten a listing's moreinfo dict {pk,cc,pt} -> "pk,cc,pt" (or None). Accepts
+    an already-decoded dict or a JSON string (staging round-trips through JSON)."""
+    mi = _jload(mi, None) if isinstance(mi, str) else mi
+    if not isinstance(mi, dict):
+        return None
+    pk, cc, pt = mi.get("pk"), mi.get("cc"), mi.get("pt")
+    return f"{pk},{cc},{pt}" if pk and cc and pt else None
+
+
 def _f(v):
     """Float or None (blank/invalid -> None)."""
     if v is None or v == "":
@@ -288,6 +298,10 @@ class Loader:
             "warranty": _t(listing.get("warranty"), 160),
             "status": "active",
             "source_url": _t(listing.get("source_url"), 500),
+            # moreinfo detail key {pk,cc,pt} -> "pk,cc,pt", so a later pass fetches
+            # ONE detail page per part (description/specs). Set on INSERT only (not
+            # in update_cols) so a sibling listing without a key can't null it.
+            "moreinfo_key": _moreinfo_key(listing.get("moreinfo")),
         }
         pid = self._upsert_id(
             "parts", vals,

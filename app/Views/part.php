@@ -31,7 +31,8 @@
     <div class="pd-pn">Part&nbsp;#<strong><?= e($part['part_number']) ?></strong> &nbsp;·&nbsp; SKU <?= e($part['sku']) ?></div>
 
     <?php if (!empty($part['description'])): ?>
-      <p class="pd-desc"><?= e($part['description']) ?></p>
+      <?php /* moreinfo blurb carries "Features & Benefits" bullets as \n lines — keep the breaks */ ?>
+      <p class="pd-desc"><?= nl2br(e($part['description'])) ?></p>
     <?php endif; ?>
 
     <div class="pd-buybox">
