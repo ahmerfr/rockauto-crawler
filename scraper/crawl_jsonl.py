@@ -67,14 +67,6 @@ def shard(items: list, index: int, total: int) -> list:
     return items[index::total]
 
 
-def _make_cap(budget: int, n_makes: int) -> int:
-    """Per-make request ceiling: split the run budget across this shard's makes so
-    DFS can't drill ONE make until the whole budget dies (which left every make
-    past ~Honda undiscovered). Floor of 50 keeps a make reachable when budget is
-    tiny."""
-    return max(50, budget // max(1, n_makes))
-
-
 def _seed_make_key(seed: dict) -> str:
     """The make slug of a seed node (matches --priority-makes entries)."""
     slug = (seed.get("href") or "").rstrip("/").split("/")[-1]
@@ -211,12 +203,49 @@ def _load_visited(path: str | None) -> set[str]:
         return set()
 
 
+def _load_frontier(path: str | None) -> list[dict] | None:
+    """Resume: the un-expanded frontier persisted by the previous run of THIS shard
+    (its own Actions cache). Returning it instead of re-seeding from makes is the
+    whole point — the crawler continues its DFS from where it stopped rather than
+    re-walking every make->year->model->parttype branch from the root each run just
+    to reach the few uncrawled leaves (the old ~2.4% new-leaf yield). None = no
+    persisted frontier yet (first run of this shard)."""
+    if not path or not os.path.exists(path):
+        return None
+    nodes: list[dict] = []
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            for ln in fh:
+                ln = ln.strip()
+                if ln:
+                    nodes.append(json.loads(ln))
+    except (OSError, ValueError):
+        return None
+    return nodes or None
+
+
+def _save_frontier(path: str | None, frontier) -> None:
+    """Persist the un-expanded frontier so the next run resumes here. Called at EVERY
+    exit (budget/time/blocked/drained) — whatever is left in the deque is exactly the
+    work still to do. Nodes are already JSON (jsn/ctx/href), so one line each."""
+    if not path:
+        return
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            for node in frontier:
+                fh.write(json.dumps(node, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        print(f"[warn] could not write frontier_out: {exc}", flush=True)
+
+
 def run(shard_index: int, shard_total: int, out_path: str,
         makes_override: list[str] | None = None,
         budget: int = 400, max_seconds: int = 18000,
         visited_file: str | None = None, visited_out: str | None = None,
         tree_only: bool = False, priority: list[str] | None = None,
-        only_makes: list[str] | None = None) -> dict:
+        only_makes: list[str] | None = None,
+        frontier_file: str | None = None, frontier_out: str | None = None) -> dict:
     """Crawl this shard, writing Listing rows (or vehicle rows in tree_only) as
     NDJSON to `out_path`."""
     started = time.monotonic()
@@ -283,10 +312,14 @@ def run(shard_index: int, shard_total: int, out_path: str,
     if tree_only:
         print("[tree-only] emitting a vehicle row per carcode; not crawling leaves", flush=True)
 
-    make_cap = _make_cap(budget, len(seeds))
-    per_make: dict[str, int] = {}         # requests spent per make this run
-    print(f"[cap] per-make request ceiling = {make_cap}", flush=True)
-    frontier: deque = deque(seeds)
+    # Resume the persisted frontier if this shard ran before; else seed from makes.
+    # THE efficiency lever: continue the DFS where the last run stopped rather than
+    # re-walking every branch from the make root each run (the old ~2.4% leaf yield).
+    resumed = _load_frontier(frontier_file)
+    frontier: deque = deque(resumed if resumed else seeds)
+    if resumed:
+        print(f"[resume] continuing persisted frontier: {len(resumed)} pending nodes "
+              f"(skipped re-seeding from {len(seeds)} makes)", flush=True)
     prior = _load_visited(visited_file)   # LEAF keys crawled in earlier runs (from cache)
     seen_this_run: set[str] = set()       # in-run dedup (all node types)
     new_keys: set[str] = set()            # leaf keys first crawled in THIS run (merged into cache)
@@ -335,19 +368,7 @@ def run(shard_index: int, shard_total: int, out_path: str,
                 stats["skipped"] += 1
                 continue
 
-            # Per-make budget: once a make used its slice, defer its subtree so the
-            # remaining budget spreads to OTHER makes. Without this, DFS drilled one
-            # make till the global budget died and A–G makes were never discovered.
-            # ponytail: fixed cap = budget/makes; raise it if depth-per-run matters
-            # more than breadth (the leaf cache already deepens makes across runs).
-            mk = ((node.get("payload") or {}).get("ctx") or {}).get("make") or "?"
-            if per_make.get(mk, 0) >= make_cap:
-                seen_this_run.add(key)
-                stats["capped"] += 1
-                continue
-
             stats["requests"] += 1
-            per_make[mk] = per_make.get(mk, 0) + 1
             if rotate_every and stats["requests"] % rotate_every == 0:
                 try:
                     client.new_session()   # fresh Evomi IP before the per-IP limit
@@ -410,10 +431,15 @@ def run(shard_index: int, shard_total: int, out_path: str,
     stats["exit_reason"] = exit_reason
     stats["frontier_remaining"] = len(frontier)
     stats["new_leaves"] = len(new_keys)
-    stats["complete"] = (exit_reason == "drained" and stats["capped"] == 0 and not frontier)
+    stats["complete"] = (exit_reason == "drained" and not frontier)
     print(f"[result] exit_reason={exit_reason} complete={stats['complete']} "
           f"new_leaves={len(new_keys)} frontier_remaining={len(frontier)} "
-          f"requests={stats['requests']} capped={stats['capped']}", flush=True)
+          f"requests={stats['requests']}", flush=True)
+
+    # Persist the un-expanded frontier so the NEXT run of this shard resumes here
+    # instead of re-seeding from makes (the core efficiency win). Whatever remains in
+    # the deque at any exit (budget/time/blocked/drained) is exactly the work left.
+    _save_frontier(frontier_out, frontier)
 
     # Persist the leaf keys crawled this run so the next run skips them (shared cache).
     if visited_out:
@@ -454,6 +480,10 @@ def _parse_args(argv=None):
     p.add_argument("--only-makes", default=os.getenv("SHARD_MAKES"),
                    help="comma list: crawl ONLY these makes (balanced-plan shard); "
                         "filters RockAuto's discovered makes so their exact hrefs are reused")
+    p.add_argument("--frontier-file", default=os.getenv("FRONTIER_FILE"),
+                   help="resume: path to this shard's persisted frontier (from prior run's cache)")
+    p.add_argument("--frontier-out", default=os.getenv("FRONTIER_OUT"),
+                   help="persist this run's remaining frontier here (cached for the next run)")
     p.add_argument("--selftest", action="store_true")
     return p.parse_args(argv)
 
@@ -476,9 +506,19 @@ def _selftest() -> bool:
     check("seed node shape", seeds[0]["node_type"] == "make"
           and seeds[0]["href"] == "/en/catalog/honda"
           and seeds[0]["payload"]["ctx"]["make"] == "HONDA")
-    # cap splits budget across makes; floor keeps a make reachable on tiny budgets
-    check("make cap splits budget", _make_cap(2500, 12) == 208)
-    check("make cap floor", _make_cap(100, 50) == 50)
+    # frontier persistence: save then load round-trips the pending nodes exactly, so
+    # the next run resumes the DFS instead of re-seeding from makes.
+    import tempfile
+    fpath = os.path.join(tempfile.gettempdir(), "sp_frontier_selftest.ndjson")
+    fsample = deque(make_seed_nodes([{"make": "FORD", "href": "/en/catalog/ford"},
+                                     {"make": "GMC", "href": "/en/catalog/gmc"}]))
+    _save_frontier(fpath, fsample)
+    fback = _load_frontier(fpath)
+    check("frontier round-trips node count", fback is not None and len(fback) == 2)
+    check("frontier round-trips node shape", bool(fback) and fback[0]["node_type"] == "make"
+          and fback[0]["payload"]["ctx"]["make"] == "FORD")
+    check("frontier load missing = None", _load_frontier(fpath + ".nope") is None)
+    os.remove(fpath)
 
     # tree-only: a model page with 2 carcode nodes -> 2 vehicle rows, 0 children.
     MODEL_HTML = """
@@ -539,7 +579,8 @@ def main(argv=None) -> int:
             if args.only_makes else None)
     run(args.shard_index, args.shard_total, args.out, makes, args.budget, args.max_seconds,
         visited_file=args.visited_file, visited_out=args.visited_out,
-        tree_only=args.tree_only, priority=priority, only_makes=only)
+        tree_only=args.tree_only, priority=priority, only_makes=only,
+        frontier_file=args.frontier_file, frontier_out=args.frontier_out)
     return 0
 
 

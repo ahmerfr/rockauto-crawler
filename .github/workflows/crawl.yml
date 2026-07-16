@@ -42,7 +42,9 @@ on:
     - cron: "0 */2 * * *"
 
 env:
-  SHARD_TOTAL: "40"
+  # 9 accounts × 40 jobs = 360 global work-units (see fleet_plan.json). Each account
+  # sets repo var ACCOUNT_OFFSET (0..8); GLOBAL = ACCOUNT_OFFSET*40 + matrix.index.
+  SHARD_TOTAL: "360"
 
 jobs:
   crawl:
@@ -75,6 +77,39 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # Resolve THIS job's work-unit from the committed fleet plan: makes + year band.
+      # GLOBAL = ACCOUNT_OFFSET*40 + matrix.index picks one of the 360 units (9 accounts
+      # × 40). Writes SHARD_MAKES / SP_YEAR_MIN / SP_YEAR_MAX into the job env so the
+      # crawl scopes to exactly this make-group × year-band = a disjoint catalog slice.
+      - name: Resolve work-unit from fleet plan
+        run: |
+          GLOBAL="${{ fromJSON(vars.ACCOUNT_OFFSET || '0') * 40 + matrix.index }}"
+          echo "GLOBAL_INDEX=$GLOBAL" >> "$GITHUB_ENV"
+          python - "$GLOBAL" >> "$GITHUB_ENV" <<'PY'
+          import json, sys
+          g = int(sys.argv[1])
+          try:
+              plan = json.load(open("fleet_plan.json"))
+          except FileNotFoundError:
+              plan = []
+          u = plan[g] if 0 <= g < len(plan) else {"makes": [], "year_min": 1900, "year_max": 2036}
+          print("SHARD_MAKES=" + ",".join(u["makes"]))
+          print("SP_YEAR_MIN=" + str(u["year_min"]))
+          print("SP_YEAR_MAX=" + str(u["year_max"]))
+          PY
+          echo "[unit] GLOBAL=$GLOBAL offset=${{ vars.ACCOUNT_OFFSET || '0' }} idx=${{ matrix.index }}"
+
+      # Resume: this shard's un-expanded frontier from its previous run (per-GLOBAL
+      # cache). Continuing the DFS here instead of re-seeding from makes is the core
+      # throughput win — no re-walking the make->year->model branches every run.
+      - name: Restore frontier (resume DFS)
+        if: ${{ (github.event.inputs.mode || 'full') != 'tree' }}
+        uses: actions/cache/restore@v4
+        with:
+          path: frontier/in.ndjson
+          key: rockauto-frontier-${{ env.GLOBAL_INDEX }}-${{ github.run_id }}
+          restore-keys: rockauto-frontier-${{ env.GLOBAL_INDEX }}-
+
       # Shared cross-run memory of which LEAF pages are already crawled, so this
       # run skips them and reaches NEW ground (cumulative full-catalog coverage).
       # tree mode fetches make/year/model pages (not leaves) -> no visited cache.
@@ -86,14 +121,14 @@ jobs:
           key: rockauto-visited-${{ github.run_id }}
           restore-keys: rockauto-visited-
 
-      - name: Crawl shard ${{ matrix.index }}
+      - name: Crawl unit ${{ env.GLOBAL_INDEX }} (idx ${{ matrix.index }} @ offset ${{ vars.ACCOUNT_OFFSET || '0' }})
         env:
           SP_USE_PROXIES: "0"        # each runner already has its own fresh IP
           SP_SOLVE_CAPTCHA: "0"      # NEVER solve CAPTCHAs — rotate to a fresh runner IP instead
           SP_MIN_DELAY: ${{ github.event.inputs.min_delay || '0.4' }}   # aggressive default; measure per-IP survival at this pace
           SP_MAX_DELAY: ${{ github.event.inputs.max_delay || '0.9' }}
-          SP_YEAR_MIN: "1900"        # widen from default 2010 -> ALL years RockAuto lists
-          SP_YEAR_MAX: "2035"        # ceiling past any real model-year (RockAuto lists next-year models early)
+          # SP_YEAR_MIN / SP_YEAR_MAX come from the fleet plan (resolve step -> $GITHUB_ENV):
+          # each unit is one (make-group × year-band) slice, so the year scope is per-unit.
           SP_MARKETS: ""             # empty = worldwide (all markets); market saved to vehicles.market
           # tree mode = vehicle enumeration only: no leaf images, no visited cache.
           SP_DOWNLOAD_IMAGES: ${{ (github.event.inputs.mode || 'full') == 'tree' && '0' || '1' }}
@@ -104,13 +139,27 @@ jobs:
           MODE="${{ github.event.inputs.mode || 'full' }}"
           EXTRA=""
           if [ "$MODE" = "tree" ]; then EXTRA="--tree-only"; fi
+          mkdir -p frontier
+          # --only-makes "$SHARD_MAKES" scopes to this unit's make-group; SP_YEAR_MIN/MAX
+          # (from the fleet plan) scope the year-band. --frontier-file resumes the DFS.
           python scraper/crawl_jsonl.py \
-            --shard-index "${{ matrix.index }}" \
+            --shard-index "${{ env.GLOBAL_INDEX }}" \
             --shard-total "${{ env.SHARD_TOTAL }}" \
+            --only-makes "$SHARD_MAKES" \
+            --frontier-file "frontier/in.ndjson" \
+            --frontier-out "frontier/out.ndjson" \
             --out "artifacts/shard-${{ matrix.index }}.ndjson" \
             --budget "${{ github.event.inputs.budget || '2500' }}" \
             --max-seconds "${{ github.event.inputs.max_seconds || (( github.event.inputs.mode || 'full') == 'tree' && '10800' || '19000') }}" \
             $EXTRA
+
+      # Persist this shard's remaining frontier so its NEXT run resumes the DFS here.
+      - name: Save frontier (for next run's resume)
+        if: ${{ always() && (github.event.inputs.mode || 'full') != 'tree' }}
+        uses: actions/cache/save@v4
+        with:
+          path: frontier/out.ndjson
+          key: rockauto-frontier-${{ env.GLOBAL_INDEX }}-${{ github.run_id }}
 
       - name: Upload shard artifact (NDJSON + thumbnails + new-leaves list)
         if: always()

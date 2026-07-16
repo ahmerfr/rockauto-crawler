@@ -27,8 +27,29 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scraper"))
 import db  # noqa: E402
 
-REPO = "ahmerfr/rockauto-crawler"
-WORKFLOW = "crawl.yml"
+# The 9-account free fleet. auto_sync pulls artifacts from EVERY account's fork
+# (each crawls a disjoint slice, ACCOUNT_OFFSET 0..8). Override with SP_SYNC_REPOS.
+DEFAULT_REPOS = [
+    "ahmerfr/rockauto-crawler", "ahmerfraizada/rockauto-crawler",
+    "ahmerfraizadas/rockauto-crawler", "ahmerfrr/rockauto-crawler",
+    "ahmerfrsa/rockauto-crawler", "ahmerfrz/rockauto-crawler",
+    "ahmerfrzz/rockauto-crawler", "ahmerfrzzz/rockauto-crawler",
+    "haseeb-shoukat2029/rockauto-crawler",
+]
+REPOS = [r.strip() for r in os.getenv("SP_SYNC_REPOS", ",".join(DEFAULT_REPOS)).split(",") if r.strip()]
+REPO = REPOS[0]  # primary (its bare run-ids in the legacy state file stay valid)
+
+
+def _key(repo: str, rid: str) -> str:
+    """Per-repo state key so run 123 in account A != run 123 in account B."""
+    return f"{repo}#{rid}"
+
+
+# Which crawl workflow to ingest. Default is the FREE fleet (crawl.yml). Set
+# SP_SYNC_WORKFLOW=crawl_evomi.yml to ingest the paid Evomi run's artifacts — and
+# ALWAYS pair that with SP_SYNC_NO_DISPATCH=1 so it never auto-dispatches a new
+# (money-spending) Evomi round.
+WORKFLOW = os.getenv("SP_SYNC_WORKFLOW", "crawl.yml")
 STATE_FILE = os.path.join(ROOT, ".auto_sync_state.json")
 LOG_FILE = os.path.join(ROOT, "logs", "auto_sync.log")
 DL_DIR = os.path.join(ROOT, "artifacts", "_autosync")
@@ -82,18 +103,19 @@ def gh_json(args: list[str]):
 DISPATCH_AFTER_HOURS = 7
 
 
-def maybe_dispatch() -> None:
-    """Keep the crawl alive: dispatch a fleet run if none is active/recent."""
+def maybe_dispatch(repo: str) -> None:
+    """Keep the crawl alive: dispatch a fleet run for `repo` if none is active/recent."""
+    if os.getenv("SP_SYNC_NO_DISPATCH"):
+        return
     try:
-        runs = gh_json(["run", "list", "--repo", REPO, "--workflow", WORKFLOW,
+        runs = gh_json(["run", "list", "--repo", repo, "--workflow", WORKFLOW,
                         "--limit", "1", "--json", "createdAt,status"])
     except Exception as exc:  # noqa: BLE001
-        log(f"dispatch check skipped: {exc}")
+        log(f"{repo}: dispatch check skipped: {exc}")
         return
     if runs:
         r = runs[0]
         if r.get("status") in ("in_progress", "queued", "requested", "waiting", "pending"):
-            log("a fleet run is already active — not dispatching.")
             return
         try:
             created = datetime.fromisoformat(r["createdAt"].replace("Z", "+00:00"))
@@ -101,11 +123,10 @@ def maybe_dispatch() -> None:
         except Exception:  # noqa: BLE001
             age_h = 999.0
         if age_h < DISPATCH_AFTER_HOURS:
-            log(f"last run {age_h:.1f}h ago (< {DISPATCH_AFTER_HOURS}h) — cron has it.")
             return
-    log("no recent fleet run — dispatching one to keep coverage going.")
-    subprocess.run([GH, "workflow", "run", WORKFLOW, "--repo", REPO,
-                    "-f", "budget=400", "-f", "max_seconds=18000"], cwd=ROOT)
+    log(f"{repo}: no recent run — dispatching one to keep coverage going.")
+    subprocess.run([GH, "workflow", "run", WORKFLOW, "--repo", repo,
+                    "-f", "budget=2500", "-f", "max_seconds=18000"], cwd=ROOT)
 
 
 def load_state() -> set[str]:
@@ -145,10 +166,10 @@ def copy_artifact_images(dest: str) -> int:
     return n
 
 
-def _run_artifact_names(run_id: str) -> list[str] | None:
+def _run_artifact_names(repo: str, run_id: str) -> list[str] | None:
     """Names of every artifact GitHub has for this run (None on API failure)."""
     out = subprocess.run(
-        [GH, "api", f"repos/{REPO}/actions/runs/{run_id}/artifacts",
+        [GH, "api", f"repos/{repo}/actions/runs/{run_id}/artifacts",
          "--paginate", "--jq", ".artifacts[].name"],
         capture_output=True, text=True, cwd=ROOT)
     if out.returncode != 0:
@@ -160,7 +181,7 @@ def _shard_in(path: str) -> bool:
     return bool(glob.glob(os.path.join(path, "**", "shard-*.ndjson"), recursive=True))
 
 
-def process_run(run_id: str) -> bool:
+def process_run(repo: str, run_id: str) -> bool:
     """Download + ingest + load one fleet run. True on success.
 
     Downloads EACH artifact into its own subfolder. `gh run download` extracts
@@ -169,10 +190,10 @@ def process_run(run_id: str) -> bool:
     error 'file exists' and abort the WHOLE download after a few artifacts — which
     silently dropped 12 of 15 shards. Per-artifact folders remove the collision.
     Returns False (run not recorded, retries next cycle) if any artifact is missing."""
-    dest = os.path.join(DL_DIR, run_id)
+    dest = os.path.join(DL_DIR, repo.split("/")[0], run_id)  # namespace by account
     os.makedirs(dest, exist_ok=True)
 
-    names = _run_artifact_names(run_id)
+    names = _run_artifact_names(repo, run_id)
     if names is None:
         log(f"run {run_id}: could not list artifacts — will retry next cycle")
         return False
@@ -188,7 +209,8 @@ def process_run(run_id: str) -> bool:
         os.makedirs(sub, exist_ok=True)
         ok = False
         for attempt in range(3):
-            r = subprocess.run([GH, "run", "download", run_id, "-n", name, "-D", sub],
+            r = subprocess.run([GH, "run", "download", run_id, "--repo", repo,
+                                "-n", name, "-D", sub],
                                capture_output=True, text=True, cwd=ROOT)
             if r.returncode == 0 and _shard_in(sub):
                 ok = True
@@ -253,42 +275,41 @@ def main() -> int:
         return 1
     if not ensure_db():
         return 1
-    try:
-        runs = gh_json(["run", "list", "--repo", REPO, "--workflow", WORKFLOW,
-                        "--limit", "40",
-                        "--json", "databaseId,status,conclusion,createdAt"])
-    except Exception as exc:  # noqa: BLE001
-        log(f"could not list runs: {exc}")
-        return 1
-
     done = load_state()
-    # Load ANY finished run — not just conclusion=success. With 20 shards and
-    # fail-fast:false, one bad shard makes the whole run "failure", but the other
-    # shards' artifacts uploaded fine (if: always()) and hold real data.
-    new = [r for r in runs
-           if r.get("status") == "completed" and str(r["databaseId"]) not in done]
-    new.sort(key=lambda r: r.get("createdAt", ""))
-    if not new:
-        log("no new completed runs — up to date.")
-        cleanup_staging()
-        maybe_dispatch()
-        log("=== auto_sync done ===")
-        return 0
-
-    log(f"{len(new)} new run(s) to load: {[r['databaseId'] for r in new]}")
-    for r in new:
-        rid = str(r["databaseId"])
+    for repo in REPOS:
         try:
-            if process_run(rid):
-                done.add(rid)
-                save_state(done)
-                log(f"run {rid}: DONE (recorded)")
-            else:
-                log(f"run {rid}: load failed — will retry next cycle")
+            runs = gh_json(["run", "list", "--repo", repo, "--workflow", WORKFLOW,
+                            "--limit", "40",
+                            "--json", "databaseId,status,conclusion,createdAt"])
         except Exception as exc:  # noqa: BLE001
-            log(f"run {rid}: error {exc} — will retry next cycle")
+            log(f"{repo}: could not list runs: {exc}")
+            continue
+
+        # Load ANY finished run — not just conclusion=success. With fail-fast:false,
+        # one bad shard makes the whole run "failure", but the other shards' artifacts
+        # uploaded fine (if: always()) and hold real data. Legacy bare run-ids in the
+        # state file count as already-done for the primary repo.
+        def _is_done(rid: str) -> bool:
+            return _key(repo, rid) in done or (repo == REPO and rid in done)
+        new = [r for r in runs
+               if r.get("status") == "completed" and not _is_done(str(r["databaseId"]))]
+        new.sort(key=lambda r: r.get("createdAt", ""))
+        if new:
+            log(f"{repo}: {len(new)} new run(s): {[r['databaseId'] for r in new]}")
+        for r in new:
+            rid = str(r["databaseId"])
+            try:
+                if process_run(repo, rid):
+                    done.add(_key(repo, rid))
+                    save_state(done)
+                    log(f"{repo} run {rid}: DONE (recorded)")
+                else:
+                    log(f"{repo} run {rid}: load failed — will retry next cycle")
+            except Exception as exc:  # noqa: BLE001
+                log(f"{repo} run {rid}: error {exc} — will retry next cycle")
+        maybe_dispatch(repo)
+
     cleanup_staging()
-    maybe_dispatch()
     log("=== auto_sync done ===")
     return 0
 
