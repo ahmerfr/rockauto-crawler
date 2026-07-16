@@ -1,81 +1,73 @@
 name: Free-US Crawl Probe (no Evomi)
 
-# PER-IP SURVIVAL PROBE (single job = one fresh GitHub Azure IP, no proxy, no
-# CAPTCHA-solving). Decides the free-transport plan: crawl one big make at an
-# aggressive pace on ONE IP until RockAuto walls it, and report the three numbers
-# the whole 4-day/$50 verdict hinges on:
-#   (1) N  = requests survived before the wall (throughput ceiling of the free fleet)
-#   (2) bytes/leaf gz (real full-catalog $ on Evomi fallback)
-#   (3) priced ratio (do free Azure IPs get RockAuto's real US prices?)
-# Manual dispatch only; single short job; ZERO paid bytes. Never solves CAPTCHAs —
-# a wall just ends the job (in production a fresh job = a fresh IP).
+# Decisive experiment for the under-$30 full-mirror plan: can GitHub's FREE US
+# runners crawl RockAuto directly (no paid proxy), get CORRECT US prices, and
+# survive the securimage CAPTCHA via OCR? If yes, the bulk crawl costs ~$0 and
+# Evomi is only a fallback. Crawls the one vehicle we already have Evomi-US truth
+# prices for (2010 Acura ZDX 3.7L V6) so prices can be compared directly.
+# Manual dispatch only; single short job; no paid bytes.
 
 on:
-  workflow_dispatch:
-    inputs:
-      make:
-        description: "make to hammer on one IP"
-        default: "honda"
-      budget:
-        description: "request ceiling (high, so we reach the IP wall not the budget)"
-        default: "4000"
+  workflow_dispatch: {}
 
 jobs:
   probe:
     runs-on: ubuntu-latest       # GitHub-hosted = US-region Azure IP
-    timeout-minutes: 55
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      # No tesseract: we never solve CAPTCHAs. Faster setup too.
-      - name: Install Python deps
+      - name: Install tesseract OCR + deps
         run: |
+          sudo apt-get update && sudo apt-get install -y tesseract-ocr
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      - name: Hammer one IP until the wall (NO proxy, NO captcha-solve)
+      - name: Runner IP + country (must be US for correct prices)
+        run: curl -s https://ipinfo.io/json || true
+      - name: Crawl ACURA direct (no Evomi, no proxy) — OCR-solve CAPTCHAs
         env:
           SP_USE_EVOMI: "0"
-          SP_USE_PROXIES: "0"
-          SP_SOLVE_CAPTCHA: "0"
+          SP_USE_PROXIES: "0"        # direct runner IP, no datacenter proxy
+          SP_SOLVE_CAPTCHA: "1"      # OCR the securimage wall
+          SP_MIN_DELAY: "0.5"
+          SP_MAX_DELAY: "1.2"
           SP_DOWNLOAD_IMAGES: "0"
-          SP_MIN_DELAY: "0.4"
-          SP_MAX_DELAY: "0.9"
-          SP_YEAR_MIN: "1990"
-          SP_YEAR_MAX: "2035"
-          SP_BUDGET_STATE: coverage/free_bytes.txt
+          SP_YEAR_MIN: "2010"
+          SP_YEAR_MAX: "2010"
+          SP_BUDGET_STATE: coverage/probe_bytes.txt
         run: |
           mkdir -p coverage artifacts
-          START=$(date +%s)
-          SP_MAX_GB="1.0" python scraper/crawl_jsonl.py \
-            --only-makes "${{ github.event.inputs.make || 'honda' }}" \
-            --out artifacts/free_probe.ndjson \
-            --budget "${{ github.event.inputs.budget || '4000' }}" \
-            --max-seconds 2700 2>&1 | tee artifacts/crawl.log || true
-          END=$(date +%s); ELAPSED=$((END-START))
-          echo "=================== PROBE SUMMARY ==================="
-          echo "ELAPSED_SECONDS=$ELAPSED"
-          echo "--- crawler stop reason / blocks (per-IP wall = N) ---"
-          grep -iE "\[stop\]|\[budget\]|block|captcha|request budget|drained" artifacts/crawl.log | tail -15
+          SP_MAX_GB="0.3" python scraper/crawl_jsonl.py \
+            --only-makes acura \
+            --out artifacts/free_acura.ndjson \
+            --budget 400 --max-seconds 1200 || true
+          echo "=== bytes spent (data-only): $(cat coverage/probe_bytes.txt 2>/dev/null) ==="
+          echo "=== listing rows: $(wc -l < artifacts/free_acura.ndjson 2>/dev/null) ==="
+      - name: Report prices + coverage (for comparison vs Evomi-US truth)
+        run: |
           python - <<'PY'
-          import json, os
-          rows=[]
-          if os.path.exists("artifacts/free_probe.ndjson"):
-              rows=[json.loads(l) for l in open("artifacts/free_probe.ndjson",encoding="utf-8")]
-          leaves={}
-          priced=0
+          import json, collections
+          rows=[];
+          try:
+              rows=[json.loads(l) for l in open("artifacts/free_acura.ndjson",encoding="utf-8")]
+          except FileNotFoundError:
+              pass
+          print("rows:", len(rows))
+          cats=collections.Counter()
           for r in rows:
-              key=r.get("source_url") or (r.get("category_path"), r.get("model_name"), r.get("year"))
-              leaves[key]=1
-              if r.get("price") is not None: priced+=1
-          b=open("coverage/free_bytes.txt").read().strip() if os.path.exists("coverage/free_bytes.txt") else "0"
-          spent=int(b) if b.isdigit() else 0
-          nleaves=max(1,len(leaves))
-          print(f"RESULT listings={len(rows)} leaves={len(leaves)} priced={priced} priced_pct={100*priced/max(1,len(rows)):.0f}%")
-          print(f"RESULT gz_bytes_spent={spent} bytes_per_leaf={spent/nleaves:.0f}")
-          # extrapolate: full catalog ~= (measured bytes/leaf) x (real non-empty leaves).
-          for est_leaves in (3_900_000, 6_000_000, 9_000_000):
-              gb=spent/nleaves*est_leaves/1e9
-              print(f"EXTRAP {est_leaves:>9,} leaves -> {gb:6.1f} GB gz -> ${gb*1.15:7.2f} Evomi")
+              cp=(r.get("category_path") or "").split(">")[-1].strip()
+              if cp: cats[cp]+=1
+          print("distinct leaf categories:", len(cats))
+          # sample ZDX wiper-blade prices to eyeball vs known US truth (~$1-$30)
+          for r in rows:
+              if "Wiper Blade" in (r.get("category_path") or ""):
+                  print(f'  WIPER {r.get("brand_name")} {r.get("part_number")}: ${r.get("price")}')
           PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: free-probe-acura
+          path: artifacts/free_acura.ndjson
+          if-no-files-found: warn

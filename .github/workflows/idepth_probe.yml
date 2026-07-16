@@ -1,0 +1,39 @@
+name: RockAuto idepth Probe
+
+# 5-minute GATE test: does func=tab_fetch + idepth=8 inline part-listing rows
+# (=> ~11x/243x fewer requests, $0 free-fleet full crawl) or only expand nav
+# children? Runs on a GitHub Actions Azure IP (RockAuto does not block those;
+# local/datacenter IPs are ASN-walled). Read-only.
+
+on:
+  workflow_dispatch:
+    inputs:
+      script:
+        description: "probe module under scraper/ (idepth_probe or dedup_probe)"
+        default: "idepth_probe"
+      carcode:
+        description: "carcode to probe (idepth_probe only)"
+        default: "3309958"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install tesseract + deps
+        run: |
+          sudo apt-get update && sudo apt-get install -y tesseract-ocr
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Probe idepth
+        env:
+          SP_USE_PROXIES: "0"
+          SP_SOLVE_CAPTCHA: "1"
+          SP_MIN_DELAY: "0.3"
+          SP_MAX_DELAY: "0.7"
+          PROBE_CARCODE: ${{ github.event.inputs.carcode }}
+        run: python scraper/${{ github.event.inputs.script }}.py

@@ -14,8 +14,8 @@ on:
   workflow_dispatch:
     inputs:
       total_gb:
-        description: "TOTAL byte budget across all shards (GB). 20 ≈ $23. Split evenly over 20 shards."
-        default: "20"
+        description: "TOTAL byte budget across all shards (GB). 14.5 ≈ $17. Split evenly over 20 shards."
+        default: "14.5"
       min_delay:
         description: "Min politeness delay per request (s). Evomi rotates IPs so this can be small."
         default: "0.3"
@@ -24,19 +24,6 @@ on:
       priority_makes:
         description: "Optional comma-separated makes to crawl first (e.g. big US brands)."
         default: ""
-      mode:
-        description: "full = crawl part listings; tree = enumerate vehicles only (cheap sizing pass)"
-        default: "full"
-  # Autonomous rounds: fire every 6h. The concurrency guard means a new round
-  # QUEUES behind a running one — never overlaps, never double-spends. Harmless
-  # after the byte cap (each run then caps instantly with 0 Evomi spend).
-  schedule:
-    - cron: "0 */6 * * *"
-
-# Only ONE Evomi crawl may run at a time — the money-safety guard for the cron.
-concurrency:
-  group: evomi-crawl
-  cancel-in-progress: false
 
 env:
   SHARD_TOTAL: "20"
@@ -87,8 +74,7 @@ jobs:
           EVOMI_USER: ${{ secrets.EVOMI_USER }}
           EVOMI_PASS: ${{ secrets.EVOMI_PASS }}
           EVOMI_COUNTRY: "US"        # RockAuto shows correct US prices only to US IPs
-          SP_SOLVE_CAPTCHA: "0"      # NO captcha-solving: rely on Evomi's fresh rotating IPs
-                                     # (each IP does few reqs, so the ~200/IP wall rarely trips)
+          SP_SOLVE_CAPTCHA: "1"      # OCR-solve any incidental securimage wall
           SP_MIN_DELAY: ${{ github.event.inputs.min_delay || '0.3' }}
           SP_MAX_DELAY: ${{ github.event.inputs.max_delay || '0.8' }}
           SP_YEAR_MIN: "1900"
@@ -101,39 +87,15 @@ jobs:
           VISITED_OUT: artifacts/visited-${{ matrix.index }}.txt
         run: |
           mkdir -p coverage artifacts
-          TOTAL="${{ github.event.inputs.total_gb || '20' }}"
-          MODE="${{ github.event.inputs.mode || 'full' }}"
-          IDX="${{ matrix.index }}"
-          if [ "$MODE" = "full" ] && [ -f shards.json ]; then
-            # Balanced plan: this shard's assigned makes + a byte cap PROPORTIONAL to
-            # its share of the catalog (big shard -> more bytes) so nothing starves and
-            # the fleet total still can't exceed $TOTAL GB.
-            PLAN=$(python - "$IDX" "$TOTAL" <<'PY'
-          import json, sys
-          idx = int(sys.argv[1]); total = float(sys.argv[2])
-          d = json.load(open("shards.json")); s = d["shards"][idx]
-          cap = total * s["veh"] / max(1, d["total_veh"])
-          print(f"{cap:.4f}\t{','.join(s['makes'])}")
-          PY
-          )
-            SHARD_GB=$(printf '%s' "$PLAN" | cut -f1)
-            MAKES=$(printf '%s' "$PLAN" | cut -f2)
-            echo "mode=full (balanced) shard $IDX  cap=${SHARD_GB} GB  makes=[$MAKES]"
-            SP_MAX_GB="$SHARD_GB" python scraper/crawl_jsonl.py \
-              --only-makes "$MAKES" \
-              --out "artifacts/shard-${IDX}.ndjson" \
-              --budget 5000000 --max-seconds 19000
-          else
-            # No plan yet (tree sizing pass, or full before shards.json is committed):
-            # flat per-shard cap + count-sharding.
-            SHARD_GB=$(python -c "print(f'{$TOTAL/${{ env.SHARD_TOTAL }}:.4f}')")
-            EXTRA=""; [ "$MODE" = "tree" ] && EXTRA="--tree-only"
-            echo "mode=$MODE (count-shard) shard $IDX  cap=${SHARD_GB} GB (of ${TOTAL} GB / ${{ env.SHARD_TOTAL }})"
-            SP_MAX_GB="$SHARD_GB" python scraper/crawl_jsonl.py \
-              --shard-index "$IDX" --shard-total "${{ env.SHARD_TOTAL }}" \
-              --out "artifacts/shard-${IDX}.ndjson" \
-              --budget 5000000 --max-seconds 19000 $EXTRA
-          fi
+          TOTAL="${{ github.event.inputs.total_gb || '14.5' }}"
+          SHARD_GB=$(python -c "print(f'{$TOTAL/${{ env.SHARD_TOTAL }}:.4f}')")
+          echo "shard ${{ matrix.index }} byte cap = ${SHARD_GB} GB (of ${TOTAL} GB total / ${{ env.SHARD_TOTAL }} shards)"
+          SP_MAX_GB="$SHARD_GB" python scraper/crawl_jsonl.py \
+            --shard-index "${{ matrix.index }}" \
+            --shard-total "${{ env.SHARD_TOTAL }}" \
+            --out "artifacts/shard-${{ matrix.index }}.ndjson" \
+            --budget 5000000 \
+            --max-seconds 19000
 
       - name: Upload shard artifact (NDJSON + new-leaves list)
         if: always()
