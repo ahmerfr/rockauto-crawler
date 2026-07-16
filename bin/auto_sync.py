@@ -124,6 +124,15 @@ def maybe_dispatch(repo: str) -> None:
             age_h = 999.0
         if age_h < DISPATCH_AFTER_HOURS:
             return
+    # Dispatching needs the FORK OWNER's token (ahmerfr can't dispatch on ahmerfrz's
+    # fork). Switch gh's active account to the owner just for the dispatch; main()
+    # restores the primary at the end. Reads above work as any account (public repos).
+    owner = repo.split("/")[0]
+    sw = subprocess.run([GH, "auth", "switch", "--user", owner],
+                        capture_output=True, text=True, cwd=ROOT)
+    if sw.returncode != 0:
+        log(f"{repo}: cannot switch to {owner} to dispatch ({sw.stderr.strip()[:80]}) — skipping")
+        return
     log(f"{repo}: no recent run — dispatching one to keep coverage going.")
     subprocess.run([GH, "workflow", "run", WORKFLOW, "--repo", repo,
                     "-f", "budget=2500", "-f", "max_seconds=18000"], cwd=ROOT)
@@ -309,6 +318,9 @@ def main() -> int:
                 log(f"{repo} run {rid}: error {exc} — will retry next cycle")
         maybe_dispatch(repo)
 
+    # maybe_dispatch may have left gh switched to a fork owner — restore the primary.
+    subprocess.run([GH, "auth", "switch", "--user", REPO.split("/")[0]],
+                   capture_output=True, text=True, cwd=ROOT)
     cleanup_staging()
     log("=== auto_sync done ===")
     return 0
