@@ -83,7 +83,10 @@ jobs:
       # crawl scopes to exactly this make-group × year-band = a disjoint catalog slice.
       - name: Resolve work-unit from fleet plan
         run: |
-          GLOBAL="${{ fromJSON(vars.ACCOUNT_OFFSET || '0') * 40 + matrix.index }}"
+          # GitHub expressions have no arithmetic — compute GLOBAL in the shell.
+          OFFSET="${{ vars.ACCOUNT_OFFSET || '0' }}"
+          IDX="${{ matrix.index }}"
+          GLOBAL=$(( OFFSET * 40 + IDX ))
           echo "GLOBAL_INDEX=$GLOBAL" >> "$GITHUB_ENV"
           python - "$GLOBAL" >> "$GITHUB_ENV" <<'PY'
           import json, sys
