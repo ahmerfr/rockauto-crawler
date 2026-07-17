@@ -27,8 +27,32 @@ os.environ.setdefault("SP_MAX_CAPTCHAS", "500")   # don't abort a worker on rota
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scraper"))
+sys.path.insert(0, os.path.join(ROOT, "bin"))
 
 SITE = "https://www.rockauto.com"
+
+from fleet_plan import BANDS  # noqa: E402  (make × year-band tiling, already selftested)
+
+
+def _build_units(makes: list[str], bands=BANDS) -> list[tuple]:
+    """Cross every make with every year-band → the disjoint work-unit list.
+
+    (make, ymin, ymax) is unique by construction, and BANDS tiles [1900, 2036]
+    with no gaps (fleet_plan selftest proves it), so the units DISJOINTLY and
+    COMPLETELY partition the catalog — no leaf crawled twice, none skipped. This
+    is the whole point: a mega-make (Chevrolet ~10% of the catalog, one
+    indivisible brand) splits into 18 year-scoped units that spread across lanes
+    instead of grinding on a single 1-req/s worker.
+    """
+    return [(m, lo, hi) for m in makes for (lo, hi) in bands]
+
+
+def _shard_units(units: list, index: int, total: int) -> list:
+    """This lane's disjoint slice: every `total`-th unit from `index`. Same
+    round-robin as scraper.crawl_jsonl.shard (offline-proven disjoint+cover-all)."""
+    if total <= 1:
+        return units
+    return units[index::total]
 
 
 def _mount_gateway(gw):
@@ -66,7 +90,15 @@ def main() -> int:
                     help="delete ALL 'IP Rotate' endpoints across all regions and exit")
     ap.add_argument("--no-teardown", action="store_true",
                     help="worker mode: reuse the shared gateway, do NOT delete it on exit")
+    ap.add_argument("--gen-units", default=None, metavar="PATH",
+                    help="discover makes through the gateway, write the (make TAB ymin TAB ymax) "
+                         "unit plan to PATH, and exit (no crawl, no teardown)")
+    ap.add_argument("--selftest", action="store_true",
+                    help="offline: prove the unit plan is disjoint + covers every make×band")
     a = ap.parse_args()
+
+    if a.selftest:
+        return 0 if _selftest() else 1
 
     from requests_ip_rotator import ApiGateway, EXTRA_REGIONS
     if a.teardown_only:
@@ -95,6 +127,25 @@ def main() -> int:
     _mount_gateway(gw)
     print("[apigw] gateway mounted on crawler session.", flush=True)
 
+    if a.gen_units:
+        import crawl_jsonl
+        from ra_client import RAClient
+        from proxy_manager import ProxyManager
+        client = RAClient(ProxyManager())            # gateway-mounted by the patch above
+        makes = crawl_jsonl.discover_makes(client)
+        names = sorted({(m.get("make") or "").strip() for m in makes
+                        if (m.get("make") or "").strip()})
+        units = _build_units(names)
+        # Data-integrity gate: never write a plan that drops or duplicates a unit.
+        assert len(units) == len(set(units)) == len(names) * len(BANDS), "unit plan not disjoint/complete"
+        os.makedirs(os.path.dirname(a.gen_units) or ".", exist_ok=True)
+        with open(a.gen_units, "w", encoding="utf-8") as fh:
+            for mk, lo, hi in units:
+                fh.write(f"{mk}\t{lo}\t{hi}\n")
+        print(f"[gen-units] {len(names)} makes × {len(BANDS)} bands = {len(units)} units "
+              f"-> {a.gen_units}", flush=True)
+        return 0
+
     try:
         if a.check_gzip:
             import requests
@@ -116,7 +167,10 @@ def main() -> int:
                                 max_seconds=a.max_seconds, only_makes=only,
                                 frontier_file=a.frontier_file, frontier_out=a.frontier_out)
         print(f"[apigw] done: {stats}", flush=True)
-        return 0
+        # Exit 42 = this unit's frontier drained (nothing left) so the lane driver
+        # moves to the next unit instead of respawning this one. 0 = made progress
+        # but hit budget/time/block → respawn to resume the persisted frontier.
+        return 42 if stats.get("complete") else 0
     finally:
         if a.no_teardown:
             print("[apigw] --no-teardown: leaving shared endpoints up for other workers.", flush=True)
@@ -126,6 +180,33 @@ def main() -> int:
             gw.shutdown()
         except Exception as exc:  # noqa: BLE001
             print(f"[apigw] shutdown warning: {exc} (check API Gateway console for leftovers)", flush=True)
+
+
+def _selftest() -> bool:
+    """Offline proof that the swarm's sharding loses NO data: every make×band unit
+    is assigned to exactly one lane (disjoint) and no unit is dropped (complete)."""
+    ok = True
+
+    def chk(label, cond):
+        nonlocal ok
+        ok = ok and cond
+        print(f"  [{'PASS' if cond else 'FAIL'}] {label}")
+
+    makes = [f"mk{i}" for i in range(23)]          # 23 synthetic makes
+    units = _build_units(makes)
+    chk("units = makes × bands", len(units) == len(makes) * len(BANDS))
+    chk("units all unique (disjoint work)", len(set(units)) == len(units))
+    chk("full make×band coverage",
+        set(units) == {(m, lo, hi) for m in makes for (lo, hi) in BANDS})
+
+    for N in (1, 7, 200):                            # lane counts incl. more lanes than makes
+        lanes = [_shard_units(units, i, N) for i in range(N)]
+        flat = [u for lane in lanes for u in lane]
+        chk(f"N={N}: lanes cover ALL units (no loss)", sorted(flat) == sorted(units))
+        chk(f"N={N}: lanes disjoint (no dup crawl)", len(flat) == len(set(flat)))
+
+    print("PASS" if ok else "FAIL")
+    return ok
 
 
 if __name__ == "__main__":
