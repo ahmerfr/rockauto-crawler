@@ -334,13 +334,15 @@ def run(shard_index: int, shard_total: int, out_path: str,
                 exit_reason = "time"
                 print(f"[stop] max runtime {max_seconds}s reached", flush=True)
                 break
-            if stats["blocked"] >= 3:
+            if stats["blocked"] >= int(os.getenv("SP_MAX_BLOCKED", "3")):
                 exit_reason = "blocked"
-                print("[stop] IP appears burned (3 blocks) — abort for a fresh runner", flush=True)
+                print("[stop] IP appears burned (blocks) — abort for a fresh runner", flush=True)
                 break
             # Consecutive-block resets on any success, so a merely RATE-LIMITED IP
             # (intermittent timeouts) could grind for hours. Cap total blocks too.
-            if stats["captchas"] >= 12:
+            # API-Gateway mode rotates IP per REQUEST, so a block/captcha is transient noise
+            # (next request = new IP) — raise both via SP_MAX_BLOCKED / SP_MAX_CAPTCHAS there.
+            if stats["captchas"] >= int(os.getenv("SP_MAX_CAPTCHAS", "12")):
                 exit_reason = "captchas"
                 print(f"[stop] {stats['captchas']} total blocks — IP rate-limited, abort", flush=True)
                 break
