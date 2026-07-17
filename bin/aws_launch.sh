@@ -37,17 +37,27 @@ else
   echo "   role already exists, reusing"
 fi
 
-echo "== 3. default subnet + security group =="
-SUBNET=$(aws ec2 describe-subnets --region "$REGION" --filters "Name=default-for-az,Values=true" \
-  --query 'Subnets[0].SubnetId' --output text)
+echo "== 3. security group + default subnets by AZ =="
 SG=$(aws ec2 describe-security-groups --region "$REGION" --filters "Name=group-name,Values=default" \
   --query 'SecurityGroups[0].GroupId' --output text)
-echo "   SUBNET=$SUBNET  SG=$SG (outbound-only; SSM needs no inbound)"
+declare -A AZSUB
+while read -r sid az; do AZSUB[$az]=$sid; done < <(aws ec2 describe-subnets --region "$REGION" \
+  --filters "Name=default-for-az,Values=true" --query 'Subnets[].[SubnetId,AvailabilityZone]' --output text)
+echo "   SG=$SG  default subnets in AZs: ${!AZSUB[*]}"
 
-echo "== 4. launch (biggest type that fits the quota) =="
+echo "== 4. launch (biggest type, in an AZ that offers it) =="
 IID=""
 for T in "${TYPES[@]}"; do
   WK=${W[$T]}
+  # not every AZ offers newer instance types (us-east-1e lacks c7i) — pick an AZ that does
+  SUBNET=""
+  for az in $(aws ec2 describe-instance-type-offerings --region "$REGION" \
+        --location-type availability-zone --filters "Name=instance-type,Values=$T" \
+        --query 'InstanceTypeOfferings[].Location' --output text); do
+    if [ -n "${AZSUB[$az]:-}" ]; then SUBNET=${AZSUB[$az]}; break; fi
+  done
+  [ -z "$SUBNET" ] && { echo "   no default subnet in an AZ offering $T, skipping"; continue; }
+  echo "   $T -> subnet $SUBNET"
   cat > /tmp/ud.sh <<EOF
 #!/bin/bash
 set -x
