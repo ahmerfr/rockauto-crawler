@@ -91,6 +91,31 @@ def _variant_code(v: dict, i: int = 0) -> str:
     return _t(base, 64) or f"opt{i}"
 
 
+def _is_transient_tier(v: dict) -> bool:
+    # Mirror parsers.is_transient_tier: a 'Wholesaler Closeout' / 'Only N Remaining'
+    # clearance unit sells out fast and must never be the default option, or the
+    # storefront prices off dead stock (the 30240 case).
+    t = (v.get("type") or "") if isinstance(v, dict) else ""
+    return "Closeout" in t or "Remaining" in t
+
+
+def _headline_variant_idx(variants: list) -> int | None:
+    """Index of the default/priced variant: a non-closeout `selected` tier, else the
+    cheapest live non-closeout tier; a closeout-only part falls back to the closeout."""
+    def price(v):
+        p = v.get("price")
+        return p if isinstance(p, (int, float)) else None
+    idxs = [i for i, v in enumerate(variants) if isinstance(v, dict)]
+    for pool in ([i for i in idxs if not _is_transient_tier(variants[i])], idxs):
+        sel = [i for i in pool if variants[i].get("selected") and price(variants[i]) is not None]
+        if sel:
+            return sel[0]
+        live = [i for i in pool if price(variants[i]) is not None and not variants[i].get("oos")]
+        if live:
+            return min(live, key=lambda i: price(variants[i]))
+    return None
+
+
 def _jload(v, default):
     """Coerce a JSON column (str | already-decoded | None) into a Python value."""
     if v is None:
@@ -149,6 +174,10 @@ class Loader:
         self._vehicle: dict[str, int] = {}
         self._category: dict[str, int] = {}
         self._part: dict[str, int] = {}
+        # skus whose part + children are already materialized THIS batch. Staging
+        # holds ~19 rows per distinct part (one per fitting vehicle); this collapses
+        # the redundant re-work to a single fitment upsert on every repeat.
+        self._part_done: set[str] = set()
 
     # -- generic idempotent upsert that returns the row id ------------------
     def _upsert_id(self, table: str, vals: dict, update_cols: list[str] | None = None,
@@ -305,8 +334,12 @@ class Loader:
         }
         pid = self._upsert_id(
             "parts", vals,
+            # description is INSERT-ONLY (like moreinfo_key): the moreinfo pass enriches
+            # it via a direct UPDATE, so a leaf RE-INGEST must not clobber that rich text
+            # back to the thin listing stub — which is exactly what wiped ~5.8k enriched
+            # descriptions (e.g. trico-30240). The stub is only a first-insert placeholder.
             update_cols=["brand_id", "category_id", "part_number", "name", "slug",
-                         "description", "price", "core_charge", "weight", "warranty",
+                         "price", "core_charge", "weight", "warranty",
                          "status", "source_url"],
         )
         self._part[sku] = pid
@@ -333,6 +366,22 @@ class Loader:
         # engine/vehicle upsert above IS the whole payload — there is no part. Stop
         # before part_id, which would otherwise mint a junk "brand-part" sku.
         if not row.get("brand_name") and not row.get("part_number"):
+            return
+
+        # Materialize the part + its children ONCE per sku per batch. The same part
+        # is staged once per fitting vehicle (~19x), so re-upserting the part and
+        # re-guarding every image/attribute/variant/interchange on each occurrence
+        # is ~75% of loader work and pure redundancy — the writes are idempotent, so
+        # skipping them changes nothing. Only the per-vehicle fitment is new.
+        sku = sku_for(row.get("brand_name"), row.get("part_number"))
+        if sku in self._part_done:
+            if vehicle_id is not None:
+                self._upsert_id(
+                    "part_fitment",
+                    {"part_id": self._part[sku], "vehicle_id": vehicle_id,
+                     "note": _t(row.get("fitment_note"), 255)},
+                    update_cols=["note"],
+                )
             return
 
         # 2. brand + category + part
@@ -377,7 +426,9 @@ class Loader:
         # / "Wholesaler Closeout", and "Choose Type" packs). `price` is authoritative
         # (RockAuto's pricebreakdown JSON); price_each is the per-each fallback.
         # price stays NULL for an option with no price (out of stock).
-        for i, v in enumerate(_jload(row.get("variants"), [])):
+        _variants = _jload(row.get("variants"), [])
+        _hidx = _headline_variant_idx(_variants)
+        for i, v in enumerate(_variants):
             if not isinstance(v, dict) or not v.get("raw"):
                 continue
             # Backward/robustness: crawls before the `code` field, and options
@@ -393,7 +444,7 @@ class Loader:
                 {"part_id": pid, "code": _t(str(code), 64), "type": _t(vtype, 160),
                  "price": vp, "core_charge": _f(v.get("core")) or 0,
                  "oos": 1 if v.get("oos") else 0,
-                 "is_default": 1 if v.get("selected") else 0,
+                 "is_default": 1 if i == _hidx else 0,
                  "pack_size": _i(v.get("pack_size")),
                  "pack_total": _f(v.get("pack_total")), "position": i},
                 update_cols=["type", "price", "core_charge", "oos", "is_default",
@@ -447,6 +498,10 @@ class Loader:
                  "note": _t(row.get("fitment_note"), 255)},
                 update_cols=["note"],
             )
+
+        # part + children now done for this sku; further staged rows for it only
+        # add fitment (handled by the fast path above).
+        self._part_done.add(sku)
 
     # -- one staged fitment row -> part_fitment ----------------------------
     def load_fitment(self, row: dict) -> None:
@@ -764,6 +819,20 @@ def selftest() -> int:
 
         assert counts["listings_ok"] == 3, counts
         assert counts["fitment_ok"] == 1, counts
+
+        # REGRESSION (description clobbering): after the moreinfo pass enriches a part's
+        # description, a later leaf RE-INGEST must NOT overwrite it back to the thin
+        # listing stub. Enrich, re-stage the same listing, reload, assert it survived.
+        cur.execute("UPDATE parts SET description=%s WHERE id=%s",
+                    ["ENRICHED blurb\n\nFeatures & Benefits:\n• aero frame", pid])
+        b2 = batch + "-reingest"
+        vals2 = [listings[0].get(c) for c in listings[0].keys()] + [b2, 0]
+        cur.execute(f"INSERT INTO stg_listings ({collist}) VALUES ({ph})", vals2)
+        Loader(conn).process_batch(b2)
+        cur.execute("SELECT description FROM parts WHERE id=%s", [pid])
+        redesc = cur.fetchone()["description"]
+        assert redesc.startswith("ENRICHED"), \
+            f"leaf re-ingest CLOBBERED the enriched description -> {redesc!r}"
 
         print(f"[selftest] loaded part id={pid}, vehicle id={veh['id']}, "
               f"fitments={fit}, counts={counts}")

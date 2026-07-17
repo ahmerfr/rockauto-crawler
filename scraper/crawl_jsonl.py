@@ -132,32 +132,26 @@ def process(client, node: dict, tree_only: bool = False) -> tuple[list[dict], li
     jsn = payload.get("jsn")
     ntype = node.get("node_type")
 
-    # LEAF (parttype listings): prefer the compact catalogapi `navnode_fetch` fragment
-    # (~half the bytes of the full page, same parts — verified). Needs the node jsn +
-    # the vehicle's max_group_index (threaded down from the carcode page). Fall back to
-    # the full page only when the fragment errors or yields nothing.
+    # LEAF (parttype listings): the FULL PAGE is authoritative. The compact catalogapi
+    # `navnode_fetch` fragment was thought to carry the "same parts" but it SILENTLY
+    # DROPS them (measured: 6 of 11 on a live coolant leaf = ~45% loss). The free fleet's
+    # wall is per-REQUEST (not per-byte) and its bandwidth is free, so it uses the full
+    # page — no part lost, same request count. The fragment is now opt-in (SP_USE_FRAGMENT
+    # =1) for byte-metered Evomi runs only, which trade completeness for GB.
     if ntype in C.LEAF_TYPES:
         ctx = C.listing_ctx(payload)
         if href and not ctx.get("source_url"):
             ctx["source_url"] = (config.BASE.rstrip("/") + href
                                  if href.startswith("/") else href)
         mgi = payload.get("mgi")
-        listings = []
-        got_fragment = False
-        if jsn is not None and mgi is not None:
+        # Opt-in fragment (Evomi byte-saver) — accepts the ~45% part drop for GB savings.
+        if os.getenv("SP_USE_FRAGMENT") == "1" and jsn is not None and mgi is not None:
             try:
-                frag = client.fetch_listings(jsn, int(mgi))
-                listings = parsers.parse_listings(frag, ctx)
-                got_fragment = True   # fetch SUCCEEDED — trust it even at 0 parts
-            except Exception:  # noqa: BLE001
-                got_fragment = False
-        # Only a fetch FAILURE falls back to the (2x heavier) full page. An empty
-        # fragment means a genuinely empty parttype — NOT a reason to re-fetch it,
-        # which was burning ~40% of the byte budget on parttypes with no parts.
-        if not got_fragment:
-            html = client.get(href) if href else client.fetch_children(jsn)
-            listings = parsers.parse_listings(html, ctx)
-        return listings, []
+                return parsers.parse_listings(client.fetch_listings(jsn, int(mgi)), ctx), []
+            except Exception:  # noqa: BLE001 - fall through to the authoritative full page
+                pass
+        html = client.get(href) if href else client.fetch_children(jsn)
+        return parsers.parse_listings(html, ctx), []
 
     if href:
         html = client.get(href)
@@ -563,6 +557,30 @@ def _selftest() -> bool:
           and _seed_make_key(ordered[-2]) == "toyota"
           and _seed_make_key(ordered[0]) == "acura")
     check("order_seeds no-op without priority", order_seeds(pseeds, None) is pseeds)
+
+    # BUG-1 regression: a LEAF must fetch the FULL PAGE by default (the navnode_fetch
+    # fragment silently drops parts — measured 6/11); the fragment is opt-in only.
+    class _LeafClient:
+        def __init__(self): self.calls = []
+        def fetch_listings(self, jsn, mgi): self.calls.append("fragment"); return "FRAG_HTML"
+        def get(self, href): self.calls.append("fullpage"); return "FULL_HTML"
+        def fetch_children(self, jsn): self.calls.append("children"); return "FULL_HTML"
+    leaf = {"node_type": "parttype", "href": "/en/catalog/leaf",
+            "payload": {"jsn": {"x": 1}, "mgi": 5, "ctx": {}}}
+    _orig_pl = parsers.parse_listings
+    parsers.parse_listings = lambda html, ctx: [{"src": html}]
+    try:
+        os.environ.pop("SP_USE_FRAGMENT", None)
+        fc = _LeafClient(); rows, _ = process(fc, leaf)
+        check("leaf uses FULL PAGE by default (no fragment part-drop)",
+              fc.calls == ["fullpage"] and bool(rows) and rows[0]["src"] == "FULL_HTML")
+        os.environ["SP_USE_FRAGMENT"] = "1"
+        fc2 = _LeafClient(); rows2, _ = process(fc2, leaf)
+        check("leaf uses fragment only when SP_USE_FRAGMENT=1",
+              fc2.calls == ["fragment"] and bool(rows2) and rows2[0]["src"] == "FRAG_HTML")
+    finally:
+        parsers.parse_listings = _orig_pl
+        os.environ.pop("SP_USE_FRAGMENT", None)
 
     print("PASS" if ok else "FAIL")
     return ok

@@ -21,8 +21,8 @@ on:
         type: choice
         options: ["full", "tree"]
       budget:
-        description: "Requests per job (higher = more pages per IP per run)"
-        default: "2500"
+        description: "Requests per job. Default 170 = just under the ~180 fresh-IP wall, so a job ends cleanly and the next matrix job (fresh IP) swaps in — no block-thrash."
+        default: "170"
       max_seconds:
         description: "Max runtime per job in seconds. Blank = 19000 (full) / 10800 (tree)."
         default: ""
@@ -40,6 +40,13 @@ on:
   # 20-IP throughput. Loader dedupes, so overlap just accumulates coverage.
   schedule:
     - cron: "0 */2 * * *"
+
+# One run at a time per account; a queued run (from the self-dispatch relaunch or the
+# watchdog cron) waits instead of stacking, and GitHub keeps only the latest pending —
+# so the loop is continuous but can never fan out into a runaway.
+concurrency:
+  group: crawl-fleet
+  cancel-in-progress: false
 
 env:
   # 9 accounts × 40 jobs = 360 global work-units (see fleet_plan.json). Each account
@@ -134,7 +141,10 @@ jobs:
           # each unit is one (make-group × year-band) slice, so the year scope is per-unit.
           SP_MARKETS: ""             # empty = worldwide (all markets); market saved to vehicles.market
           # tree mode = vehicle enumeration only: no leaf images, no visited cache.
-          SP_DOWNLOAD_IMAGES: ${{ (github.event.inputs.mode || 'full') == 'tree' && '0' || '1' }}
+          # Images OFF: every request is spent on a LEAF (up to ~7x more leaves/IP), and
+          # image URLs still ride the NDJSON. Photos are pulled off the home box later by
+          # bin/fetch_images.py (the image CDN is not IP-walled) — free, decoupled.
+          SP_DOWNLOAD_IMAGES: "0"
           PRIORITY_MAKES: ${{ github.event.inputs.priority_makes || '' }}
           VISITED_FILE: ${{ (github.event.inputs.mode || 'full') == 'tree' && '' || 'coverage/visited.txt' }}
           VISITED_OUT: ${{ (github.event.inputs.mode || 'full') == 'tree' && '' || format('artifacts/visited-{0}.txt', matrix.index) }}
@@ -204,3 +214,27 @@ jobs:
         with:
           path: coverage/visited.txt
           key: rockauto-visited-${{ github.run_id }}
+
+  # Self-dispatch: fire the NEXT run so the fleet runs continuously (24/7) with no cron
+  # gap. Uses the built-in GITHUB_TOKEN — workflow_dispatch is the documented exception
+  # to anti-recursion, so NO PAT is needed. The top-level concurrency group caps this to
+  # 1 running + 1 pending (no runaway). Stops on a STOP_CRAWL file or past the deadline.
+  relaunch:
+    needs: [crawl, aggregate]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write            # the default GITHUB_TOKEN is read-only — this is required
+    steps:
+      - uses: actions/checkout@v4
+      - name: Relaunch unless stopped
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f STOP_CRAWL ]; then echo "STOP_CRAWL present — halting the loop."; exit 0; fi
+          UNTIL="2026-07-24T00:00:00Z"          # hard deadline (7 days); edit to extend
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          if [[ "$NOW" > "$UNTIL" ]]; then echo "past deadline $UNTIL — halting."; exit 0; fi
+          sleep 30
+          gh workflow run crawl.yml --ref master
+          echo "relaunched crawl.yml on master"
