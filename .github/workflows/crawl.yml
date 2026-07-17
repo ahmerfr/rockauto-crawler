@@ -57,10 +57,10 @@ jobs:
   crawl:
     strategy:
       fail-fast: false
-      max-parallel: 20        # GitHub free hard cap (20 concurrent). The extra 20
-      matrix:                 # matrix entries QUEUE and swap into a slot the instant
-                              # a running IP walls and its job exits = continuous
-                              # fresh-IP rotation (the user's shard-swap idea).
+      max-parallel: 6         # GENTLE: 6/account x 9 = ~54 IPs (was 20/180). Sustained
+      matrix:                 # 180 tripped GitHub's fair-use throttle (2026-07-17);
+                              # 54 stays under it so the fleet keeps running unattended.
+                              # Raise back toward 20 only once we confirm no re-throttle.
         index: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
                 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]
     runs-on: ubuntu-latest
