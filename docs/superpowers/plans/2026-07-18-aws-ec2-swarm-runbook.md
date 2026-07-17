@@ -30,7 +30,7 @@ into **5,454 (make × year-band) units** — disjoint + complete (proven live +
 ```bash
 ssh -i your-key.pem ubuntu@<VM_PUBLIC_IP>
 sudo apt update && sudo apt install -y python3-pip git awscli
-pip3 install --user requests lxml beautifulsoup4 boto3 requests-ip-rotator
+pip3 install --user requests lxml beautifulsoup4 pymysql Pillow boto3 requests-ip-rotator
 git clone https://github.com/ahmerfr/rockauto-crawler.git
 cd rockauto-crawler
 aws configure    # paste AWS key id + secret, region us-east-1 — stays on the VM only

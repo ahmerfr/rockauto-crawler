@@ -68,10 +68,9 @@ git clone https://github.com/ahmerfr/rockauto-crawler.git
 cd rockauto-crawler
 python3 -m venv venv
 ./venv/bin/pip install --upgrade pip
-./venv/bin/pip install requests lxml beautifulsoup4 boto3 requests-ip-rotator
 mkdir -p logs out fr
 chown -R ubuntu:ubuntu /home/ubuntu
-sudo -u ubuntu bash -c 'cd /home/ubuntu/rockauto-crawler && PY=./venv/bin/python WORKERS=$WK nohup bash bin/crawl_apigw_fleet.sh > logs/fleet.log 2>&1 &'
+sudo -u ubuntu env WORKERS=$WK bash /home/ubuntu/rockauto-crawler/bin/ec2_run.sh
 echo done > /home/ubuntu/PROVISION_DONE
 EOF
   echo "   trying $T (WORKERS=$WK)..."
