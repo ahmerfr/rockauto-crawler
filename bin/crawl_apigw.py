@@ -172,14 +172,18 @@ def main() -> int:
         # but hit budget/time/block → respawn to resume the persisted frontier.
         return 42 if stats.get("complete") else 0
     finally:
+        # Side-effects ONLY — never `return` here. A `return` in `finally` clobbers
+        # the try's `return 42` completion signal, so every lane saw rc=0 even when a
+        # unit drained → it re-crawled each unit up to MAXCHUNKS times (the churn bug:
+        # 28k drains for 5.4k units, DONE=0, ~5× wasted RockAuto load).
         if a.no_teardown:
             print("[apigw] --no-teardown: leaving shared endpoints up for other workers.", flush=True)
-            return 0
-        print("[apigw] shutdown (deleting endpoints)...", flush=True)
-        try:
-            gw.shutdown()
-        except Exception as exc:  # noqa: BLE001
-            print(f"[apigw] shutdown warning: {exc} (check API Gateway console for leftovers)", flush=True)
+        else:
+            print("[apigw] shutdown (deleting endpoints)...", flush=True)
+            try:
+                gw.shutdown()
+            except Exception as exc:  # noqa: BLE001
+                print(f"[apigw] shutdown warning: {exc} (check API Gateway console for leftovers)", flush=True)
 
 
 def _selftest() -> bool:
