@@ -14,9 +14,10 @@ $VENV/bin/pip install -q -r requirements.txt boto3 requests-ip-rotator
 rm -f STOP_CRAWL
 mkdir -p logs out fr
 WORKERS="${WORKERS:-110}"
-echo "[ec2_run] launching fleet WORKERS=$WORKERS (detached)..."
+REGIONS="${REGIONS:-5}"      # gateway regions = distinct AWS IP pools (raise to dilute blocks)
+echo "[ec2_run] launching fleet WORKERS=$WORKERS REGIONS=$REGIONS (detached)..."
 # redirect setsid's OWN stdout/stderr to the log (not just the inner cmd) so the
 # launching SSM/cloud-init command doesn't keep its pipe open and hang "InProgress".
-setsid bash -c "PY=$VENV/bin/python WORKERS=$WORKERS bash bin/crawl_apigw_fleet.sh" </dev/null >> logs/fleet.log 2>&1 &
+setsid bash -c "PY=$VENV/bin/python REGIONS=$REGIONS WORKERS=$WORKERS bash bin/crawl_apigw_fleet.sh" </dev/null >> logs/fleet.log 2>&1 &
 sleep 1
 echo "[ec2_run] launched. monitor: tail -f logs/fleet.log  (and logs/w0.log)"
