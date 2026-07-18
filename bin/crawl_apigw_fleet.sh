@@ -26,6 +26,10 @@ PY="${PY:-python3}"
 BUDGET="${BUDGET:-20000}"
 CHUNK_SECS="${CHUNK_SECS:-5400}"
 MAXCHUNKS="${MAXCHUNKS:-60}"
+# Unique per fleet launch so out filenames NEVER collide across restarts. Without this
+# the per-lane chunk counter resets to 0 each launch and --out (mode "w") would TRUNCATE
+# a resumed unit's prior chunk-0 file — silent data loss on every restart.
+RUN="${RUN:-$(date +%s)}"
 UNITS="units.tsv"
 cd "$(dirname "$0")/.." || exit 1
 mkdir -p out fr logs
@@ -51,9 +55,12 @@ for i in $(seq 0 $((N-1))); do
       [ -f STOP_CRAWL ] && break
       [ -z "$MK" ] && continue
       ukey=$(printf '%s' "${MK}_${LO}-${HI}" | tr -c 'A-Za-z0-9._-' '_')
-      done_marker="fr/done_${i}_${ukey}"
+      # markers + frontier keyed by UNIT only (not lane) so changing the lane count
+      # (WORKERS) resumes cleanly: a unit finished/started by any lane is skipped/resumed
+      # by whichever lane owns it after a re-shard, instead of re-crawling from scratch.
+      done_marker="fr/done_${ukey}"
       [ -f "$done_marker" ] && continue        # completed in a prior run — skip (resumable)
-      fr="fr/f${i}_${ukey}.ndjson"
+      fr="fr/f_${ukey}.ndjson"
       c=0
       while [ ! -f STOP_CRAWL ] && [ "$c" -lt "$MAXCHUNKS" ]; do
         # Year-band in env BEFORE the process starts => config.SCOPE reads the right
@@ -64,7 +71,7 @@ for i in $(seq 0 $((N-1))); do
           --only-makes "$MK" --regions "$REGIONS" --no-teardown \
           --budget "$BUDGET" --max-seconds "$CHUNK_SECS" \
           --min-delay 0.02 --max-delay 0.06 \
-          --out "out/s${i}_${ukey}_c${c}.ndjson" \
+          --out "out/s${i}_${ukey}_r${RUN}_c${c}.ndjson" \
           --frontier-file "$fr" --frontier-out "$fr" \
           >> "logs/w${i}.log" 2>&1
         rc=$?
