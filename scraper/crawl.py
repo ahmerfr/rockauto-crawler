@@ -193,30 +193,22 @@ def build_child_payload(child: dict, parent_payload: dict | None) -> dict:
         parent_ctx["markets"] = mkts
     ntype = child.get("nodetype")
     if ntype in ("category", "subcategory", "group", "groupname", "parttype"):
-        # Accumulate the nav label of EVERY category level, arbitrarily deep, so a
-        # nested tree (Group>Subgroup>Parttype>...) keeps every rung — not just the
-        # last two. Route-independent: each rung appends its own display name to
-        # whatever the parent already accumulated.
+        # category_path is derived from THIS node's OWN identity — its jsn `groupname`
+        # (RockAuto's true immediate parent) plus its display name — NOT by accumulating
+        # the traversal walk. RockAuto re-renders its ENTIRE category tree at every level,
+        # so parse_nav returns sibling/ancestor nodes alongside the real children; the old
+        # "append every rung to whatever the parent accumulated" snowballed 20+ bogus rungs
+        # into the path (a Brake Pad ended up filed under 'Wiper & Washer', ~64% of parts
+        # mis-categorised). Route-independent `groupname>name` is immune to that over-
+        # collection and matches RockAuto's real (2-level) taxonomy.
         name = node_display_name(child)              # 'Brake Pad', 'Disc Brake Pad', ...
-        prev = parent_ctx.get("category_path")
-        # A parttype's jsn names its immediate parent groupname. Use it to SEED the
-        # path only when we reached the parttype without having accumulated a group
-        # (e.g. straight off the carcode page) — so we still get 'Group>Parttype'
-        # rather than a bare 'Parttype'. If a group was already accumulated, prev is
-        # set and this seed is skipped (no duplication).
-        if ntype == "parttype" and not prev:
-            grp = (child.get("jsn") or {}).get("groupname")
-            if grp and str(grp).strip():
-                prev = str(grp).strip()
+        grp = (child.get("jsn") or {}).get("groupname")
+        grp = (str(grp).strip() if grp is not None and str(grp).strip()
+               and not str(grp).strip().isdigit() else None)
         if name:
-            if not prev:
-                parent_ctx["category_path"] = name
-            elif prev.split(">")[-1].strip().lower() != name.strip().lower():
-                parent_ctx["category_path"] = f"{prev}>{name}"
-            else:  # same as parent tail (seed==name, or a repeated node): keep prev
-                parent_ctx["category_path"] = prev
-        elif prev:
-            parent_ctx["category_path"] = prev
+            parent_ctx["category_path"] = (
+                f"{grp}>{name}" if grp and grp.lower() != name.strip().lower() else name)
+        # An unnamed node keeps whatever the parent carried (rare; nothing to add).
     return {
         "jsn": child.get("jsn"),
         "ctx": parent_ctx,
@@ -582,38 +574,34 @@ def _selftest() -> bool:
         {"nodetype": "model", "markets": ["MX"]}),
         "should_enqueue drops MX-only node")
 
-    # payload accumulation builds category_path and inherits ctx
+    # category_path is ROUTE-INDEPENDENT: each node derives its path from its OWN jsn
+    # (groupname = true parent) + name, NOT from the accumulated parent walk. This is the
+    # fix for parse_nav's full-tree over-collection, which snowballed bogus rungs and
+    # mis-filed a Brake Pad under 'Wiper & Washer' (~64% of parts affected).
     parent = {"ctx": {"make": "honda", "year": 2015, "model": "accord"}}
     child_cat = {"nodetype": "category", "jsn": {"desc": "Brake & Wheel Hub"}}
     p1 = build_child_payload(child_cat, parent)
     check(p1["ctx"]["category_path"] == "Brake & Wheel Hub",
-          "category_path seeded")
-    child_grp = {"nodetype": "group", "jsn": {"desc": "Brake Pad"}}
-    p2 = build_child_payload(child_grp, p1)
+          f"top category is its own name: {p1['ctx']['category_path']}")
+    # A parttype's jsn names its true parent group -> clean 'Group>Parttype'.
+    child_pt = {"nodetype": "parttype", "label": "Brake Pad",
+                "jsn": {"groupname": "Brake & Wheel Hub"}}
+    p2 = build_child_payload(child_pt, p1)
     check(p2["ctx"]["category_path"] == "Brake & Wheel Hub>Brake Pad",
-          "category_path appended with '>'")
+          f"parttype -> groupname>name: {p2['ctx']['category_path']}")
     check(p2["ctx"]["make"] == "honda" and p2["ctx"]["model"] == "accord",
           "vehicle ctx inherited down the tree")
-
-    # DEEP (3+ level) accumulation: category > group > parttype must keep EVERY
-    # rung, not collapse to groupname>parttype (the bug this build fixes).
-    child_pt = {"nodetype": "parttype", "label": "Disc Brake Pad",
-                "jsn": {"groupname": "Brake & Wheel Hub"}}
-    p3 = build_child_payload(child_pt, p2)
-    check(p3["ctx"]["category_path"] == "Brake & Wheel Hub>Brake Pad>Disc Brake Pad",
-          f"deep 3-level path lost a rung: {p3['ctx']['category_path']}")
-    # A 4th nesting rung still accumulates.
-    child_sub = {"nodetype": "parttype", "label": "Semi-Metallic",
-                 "jsn": {"groupname": "Brake & Wheel Hub"}}
-    p4 = build_child_payload(child_sub, p3)
-    check(p4["ctx"]["category_path"]
-          == "Brake & Wheel Hub>Brake Pad>Disc Brake Pad>Semi-Metallic",
-          f"deep 4-level path lost a rung: {p4['ctx']['category_path']}")
-    # Route-independence: a parttype reached WITHOUT a traversed group still seeds
-    # 'Group>Parttype' from its jsn groupname (no bare parttype, no dupe group).
+    # REGRESSION (the bug): even reached via a GARBAGE accumulated parent path, a parttype
+    # resolves to its own clean groupname>name — the over-collected walk cannot leak in.
+    garbage_parent = {"ctx": {"make": "honda",
+        "category_path": "Suspension>Wiper & Washer>Electrical-Switch & Relay>Wheel"}}
+    p_bug = build_child_payload(child_pt, garbage_parent)
+    check(p_bug["ctx"]["category_path"] == "Brake & Wheel Hub>Brake Pad",
+          f"garbage parent path leaked into leaf: {p_bug['ctx']['category_path']}")
+    # Route-independence off the carcode page (no traversed group) — same clean result.
     p_direct = build_child_payload(child_pt, {"ctx": {"make": "honda"}})
-    check(p_direct["ctx"]["category_path"] == "Brake & Wheel Hub>Disc Brake Pad",
-          f"parttype off carcode page mis-seeded: {p_direct['ctx']['category_path']}")
+    check(p_direct["ctx"]["category_path"] == "Brake & Wheel Hub>Brake Pad",
+          f"parttype off carcode page mis-derived: {p_direct['ctx']['category_path']}")
 
     # "All Engines" AND specific-engine carcode nodes must BOTH enqueue (parts can
     # differ per engine; our carcode encodes the engine). Neither is dropped.
