@@ -63,6 +63,12 @@ for i in $(seq 0 $((N-1))); do
     # stays saturated until the whole list is done. Claims are per-RUN (cleared at
     # launch), so a crashed lane's unit is retried by the next run rather than orphaned.
     # The list is read on FD 3 so the crawler can never swallow it via stdin.
+    # SWEEP until a full pass claims nothing. A lane must NOT exit while claimable work
+    # remains: originally each lane walked the list once and quit, so as units got claimed
+    # the fleet bled lanes (measured: 446 -> 128 live, CPU 98% IDLE with 4,649 units left).
+    sweep=1
+    while [ "$sweep" = 1 ] && [ ! -f STOP_CRAWL ]; do
+    sweep=0
     while IFS=$'\t' read -r MK LO HI <&3; do
       [ -f STOP_CRAWL ] && break
       [ -z "$MK" ] && continue
@@ -72,7 +78,14 @@ for i in $(seq 0 $((N-1))); do
       # by whichever lane owns it after a re-shard, instead of re-crawling from scratch.
       done_marker="fr/done_${ukey}"
       [ -f "$done_marker" ] && continue        # completed in a prior run — skip (resumable)
+      # Give up on a unit that has already failed to drain 3 times, so one permanently
+      # blocked unit cannot spin the whole fleet forever. (Counted best-effort: a race
+      # between lanes can allow an extra attempt, which is harmless.)
+      fails=0
+      [ -f "fr/fail_${ukey}" ] && fails=$(wc -l < "fr/fail_${ukey}")
+      [ "$fails" -ge 3 ] && continue
       mkdir "fr/claim_${ukey}" 2>/dev/null || continue   # another lane already owns this unit
+      sweep=1                                  # found work -> sweep the list again after
       fr="fr/f_${ukey}.ndjson"
       c=0
       while [ ! -f STOP_CRAWL ] && [ "$c" -lt "$MAXCHUNKS" ]; do
@@ -92,7 +105,16 @@ for i in $(seq 0 $((N-1))); do
         [ "$rc" -eq 42 ] && touch "$done_marker" && break   # unit drained -> next unit
         sleep 2
       done
+      # RELEASE the claim if the unit did not drain (MAXCHUNKS exhausted / STOP). Without
+      # this the claim dir outlives the attempt and the unit is orphaned for the rest of
+      # the run — nothing can ever pick it up again. Count the attempt so a dead unit is
+      # abandoned after 3 tries rather than retried forever.
+      if [ ! -f "$done_marker" ]; then
+        echo x >> "fr/fail_${ukey}"
+        rmdir "fr/claim_${ukey}" 2>/dev/null
+      fi
     done 3< "$UNITS"
+    done
     echo "[lane $i] done (all units claimed/exhausted or STOP_CRAWL)" >> "logs/w${i}.log"
   ) &
 done
