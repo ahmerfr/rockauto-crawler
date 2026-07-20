@@ -34,7 +34,11 @@ RATE = {
     "concurrency": int(os.getenv("SP_CONCURRENCY", "6")),     # parallel workers (each on its own proxy)
     "request_timeout_s": 15,    # fail a blocked/slow request fast so shards turn over
     "max_attempts": 4,          # per-node retry budget before marking 'failed'
-    "captcha_backoff_s": 90,    # cool-down for an IP that hit a CAPTCHA
+    # Cool-down for an IP that hit a CAPTCHA. Meaningful only when one IP is reused across
+    # requests; under API-Gateway per-REQUEST rotation the next request already has a
+    # different source IP, so this just idles the lane (worst case new_session() retries
+    # x 90s ~= 6 min stalled). Set SP_CAPTCHA_BACKOFF=3 in gateway mode.
+    "captcha_backoff_s": float(os.getenv("SP_CAPTCHA_BACKOFF", "90")),
 }
 
 # ---- CAPTCHA SOLVING -----------------------------------------------------

@@ -24,6 +24,18 @@ os.environ.setdefault("SP_YEAR_MAX", "2035")
 os.environ.setdefault("SP_MARKETS", "")           # worldwide
 os.environ.setdefault("SP_MAX_BLOCKED", "60")     # per-request IP rotation = transient blocks
 os.environ.setdefault("SP_MAX_CAPTCHAS", "500")   # don't abort a worker on rotation noise
+# The captcha SOLVER is pure waste in gateway mode and was the single biggest drag on
+# throughput. Each attempt fires 3 requests (image GET + submit POST + page reload) x
+# CAPTCHA["attempts"]=5 = up to 15 extra round-trips ON THE LANE'S OWN CLOCK, and none of
+# them increment stats["requests"], so logs under-reported true load ~2.5x. Worse: the
+# tesseract binary is NOT installed on the fleet host (verified `which tesseract` -> empty),
+# so the OCR can never succeed and every one of those attempts is guaranteed to fail before
+# falling back to rotate() -- which is exactly what we want to happen immediately. Measured
+# effect of disabling: ~0.41 -> ~0.90 listings/s per lane.
+os.environ.setdefault("SP_SOLVE_CAPTCHA", "0")
+# A per-IP cool-down is meaningless when the gateway hands every REQUEST a different source
+# IP -- the next request is already on a new IP, so sleeping 90s only idles the lane.
+os.environ.setdefault("SP_CAPTCHA_BACKOFF", "3")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scraper"))
