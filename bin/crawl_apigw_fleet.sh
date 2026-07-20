@@ -47,11 +47,23 @@ fi
 TOTAL=$(wc -l < "$UNITS")
 echo "[fleet] $TOTAL units across $N lanes (~$(( (TOTAL + N - 1) / N )) units/lane)"
 
+# Claims are per-RUN: clear any left behind by a previous run so a unit whose lane died
+# mid-way is retried instead of orphaned forever. done_* markers persist, so units that
+# actually finished are still skipped and no completed work is repeated.
+rm -rf fr/claim_* 2>/dev/null
 echo "[fleet] launching $N lanes..."
 for i in $(seq 0 $((N-1))); do
   (
-    # This lane's disjoint slice = units[i::N] (every N-th line from index i).
-    awk -v i="$i" -v n="$N" '(NR-1) % n == i' "$UNITS" | while IFS=$'\t' read -r MK LO HI; do
+    # WORK-STEALING: every lane walks the FULL unit list and atomically CLAIMS each unit
+    # with mkdir (atomic on ext4 -> exactly one lane wins the race). The previous static
+    # deal (awk '(NR-1)%n==i') fixed each lane's slice at launch, so a lane that drained
+    # its slice EXITED (see "units exhausted" below) while other lanes still had hours of
+    # work -- measured on this fleet: 204 dead lanes and only ~58% of lanes producing.
+    # With claims, a free lane immediately takes the next unclaimed unit, so the fleet
+    # stays saturated until the whole list is done. Claims are per-RUN (cleared at
+    # launch), so a crashed lane's unit is retried by the next run rather than orphaned.
+    # The list is read on FD 3 so the crawler can never swallow it via stdin.
+    while IFS=$'\t' read -r MK LO HI <&3; do
       [ -f STOP_CRAWL ] && break
       [ -z "$MK" ] && continue
       ukey=$(printf '%s' "${MK}_${LO}-${HI}" | tr -c 'A-Za-z0-9._-' '_')
@@ -60,6 +72,7 @@ for i in $(seq 0 $((N-1))); do
       # by whichever lane owns it after a re-shard, instead of re-crawling from scratch.
       done_marker="fr/done_${ukey}"
       [ -f "$done_marker" ] && continue        # completed in a prior run — skip (resumable)
+      mkdir "fr/claim_${ukey}" 2>/dev/null || continue   # another lane already owns this unit
       fr="fr/f_${ukey}.ndjson"
       c=0
       while [ ! -f STOP_CRAWL ] && [ "$c" -lt "$MAXCHUNKS" ]; do
@@ -79,8 +92,8 @@ for i in $(seq 0 $((N-1))); do
         [ "$rc" -eq 42 ] && touch "$done_marker" && break   # unit drained -> next unit
         sleep 2
       done
-    done
-    echo "[lane $i] done (units exhausted or STOP_CRAWL)" >> "logs/w${i}.log"
+    done 3< "$UNITS"
+    echo "[lane $i] done (all units claimed/exhausted or STOP_CRAWL)" >> "logs/w${i}.log"
   ) &
 done
 
